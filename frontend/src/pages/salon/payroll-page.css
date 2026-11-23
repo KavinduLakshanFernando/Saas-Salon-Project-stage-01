@@ -1,0 +1,1251 @@
+/* Payroll — mobile-first layout */
+
+.payroll-page {
+  --pr-ink: #0f172a;
+  --pr-muted: #64748b;
+  --pr-line: #e2e8f0;
+  --pr-soft: #f8fafc;
+  --pr-brand: var(--brand-primary, #0d5c3d);
+  --pr-brand-soft: var(--brand-soft, #ecfdf3);
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding-bottom: 0.5rem;
+}
+
+.payroll-page.has-sticky-actions {
+  padding-bottom: 5.5rem;
+}
+
+/* Hero */
+.pr-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 1.05rem;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, var(--pr-brand) 0%, var(--brand-hover, #0a4a31) 100%);
+  color: #fff;
+}
+
+.pr-hero-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.pr-hero-icon {
+  flex-shrink: 0;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 1.15rem;
+}
+
+.pr-hero h1 {
+  margin: 0;
+  color: #fff;
+  font-size: 1.2rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+body:has(.salon-theme-root) main .pr-hero h1,
+body:has(.admin-panel-root) main .pr-hero h1 {
+  color: #fff !important;
+}
+
+.pr-hero p {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.pr-hero-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.pr-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.pr-pill-net {
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+@media (min-width: 640px) {
+  .pr-hero {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.15rem 1.35rem;
+  }
+
+  .pr-hero h1 {
+    font-size: 1.35rem;
+  }
+
+  .pr-hero p {
+    font-size: 0.875rem;
+  }
+}
+
+/* Cards */
+.pr-card {
+  background: #fff;
+  border: 1px solid var(--pr-line);
+  border-radius: 1rem;
+  padding: 1rem;
+}
+
+@media (min-width: 640px) {
+  .pr-card {
+    padding: 1.2rem 1.35rem;
+  }
+}
+
+.pr-card-head {
+  margin-bottom: 0.9rem;
+}
+
+.pr-card-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--pr-ink);
+}
+
+.pr-card-head p {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--pr-muted);
+}
+
+.pr-empty {
+  padding: 1.25rem 0.5rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--pr-muted);
+}
+
+/* Generate */
+.pr-generate {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  align-items: end;
+}
+
+.pr-generate-btn {
+  grid-column: 1 / -1;
+  min-height: 2.55rem;
+  height: 2.55rem;
+}
+
+@media (min-width: 640px) {
+  .pr-generate {
+    grid-template-columns: minmax(130px, 160px) minmax(160px, 200px) auto 1fr;
+    align-items: end;
+    gap: 0.85rem;
+  }
+
+  .pr-generate-btn {
+    grid-column: auto;
+    width: auto;
+    min-width: 8.5rem;
+  }
+}
+
+.pr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.pr-field > span,
+.pr-field > label,
+.pr-field Label,
+.pr-emp-fields .pr-field > span {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pr-muted);
+}
+
+.pr-select,
+.pr-input {
+  width: 100%;
+  min-height: 2.55rem;
+  border: 1px solid var(--pr-line);
+  border-radius: 0.65rem;
+  background: #fff;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.9rem;
+  color: var(--pr-ink);
+}
+
+.pr-input {
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.55rem;
+  padding: 0.55rem 1rem;
+  border-radius: 0.65rem;
+  border: 1px solid transparent;
+  font-size: 0.875rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.pr-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pr-btn-primary {
+  background: var(--pr-brand);
+  color: #fff;
+}
+
+.pr-btn-primary:hover:not(:disabled) {
+  background: var(--brand-hover, #0a4a31);
+}
+
+.pr-btn-secondary {
+  background: #fff;
+  border-color: var(--pr-line);
+  color: var(--pr-ink);
+}
+
+.pr-btn-secondary:hover:not(:disabled) {
+  background: var(--pr-soft);
+}
+
+/* Run picker */
+.pr-runs {
+  display: flex;
+  gap: 0.65rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.1rem 0.1rem 0.35rem;
+  margin: 0 -0.15rem;
+  scrollbar-width: thin;
+}
+
+.pr-run {
+  flex: 0 0 min(78vw, 15.5rem);
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--pr-line);
+  border-radius: 0.85rem;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pr-run:hover {
+  border-color: #cbd5e1;
+  background: var(--pr-soft);
+}
+
+.pr-run.is-active {
+  border-color: var(--pr-brand);
+  background: var(--pr-brand-soft);
+  box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.22);
+}
+
+.pr-run-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.pr-run-period {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--pr-ink);
+}
+
+.pr-run-net {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--pr-brand);
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-run-meta {
+  font-size: 0.7rem;
+  color: var(--pr-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 900px) {
+  .pr-runs {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+    overflow: visible;
+    scroll-snap-type: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .pr-run {
+    flex: none;
+    width: auto;
+  }
+}
+
+/* Badges */
+.pr-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.pr-badge-draft {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.pr-badge-done,
+.pr-badge-paid {
+  background: #ccfbf1;
+  color: var(--pr-brand);
+}
+
+/* Detail */
+.pr-detail-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-bottom: 0.9rem;
+}
+
+.pr-detail-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pr-detail-title h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--pr-ink);
+}
+
+.pr-detail-sub {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  color: var(--pr-muted);
+}
+
+.pr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.pr-actions-desktop {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .pr-detail-head {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .pr-actions-desktop {
+    display: flex;
+  }
+}
+
+.pr-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+
+.pr-summary-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 0.75rem;
+  background: var(--pr-soft);
+  border: 1px solid var(--pr-line);
+}
+
+.pr-summary-cell span {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pr-muted);
+}
+
+.pr-summary-cell strong {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--pr-ink);
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+.pr-summary-net {
+  background: var(--pr-brand-soft);
+  border-color: #99f6e4;
+}
+
+.pr-summary-net strong {
+  color: var(--pr-brand);
+}
+
+@media (min-width: 720px) {
+  .pr-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Employee cards — primary on mobile */
+.pr-employee-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pr-emp-card {
+  border: 1px solid var(--pr-line);
+  border-radius: 0.9rem;
+  padding: 0.9rem;
+  background: #fff;
+}
+
+.pr-emp-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.pr-emp-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--pr-ink);
+}
+
+.pr-emp-code {
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  color: var(--pr-muted);
+}
+
+.pr-emp-net {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.pr-emp-net span {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pr-muted);
+}
+
+.pr-emp-net strong {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--pr-brand);
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-emp-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+
+.pr-emp-stats > div {
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.55rem;
+  background: var(--pr-soft);
+}
+
+.pr-emp-stats span {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pr-muted);
+}
+
+.pr-emp-stats strong {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--pr-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-emp-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  margin-bottom: 0.75rem;
+}
+
+.pr-emp-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.85rem;
+  font-size: 0.75rem;
+  color: var(--pr-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-link {
+  color: var(--pr-brand);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.pr-link:hover {
+  text-decoration: underline;
+}
+
+/* Desktop table */
+.pr-table-wrap {
+  display: none;
+  overflow-x: auto;
+  margin: 0 -0.15rem;
+  border: 1px solid var(--pr-line);
+  border-radius: 0.85rem;
+}
+
+.pr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.pr-table th,
+.pr-table td {
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid var(--pr-line);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.pr-table th {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pr-muted);
+  background: var(--pr-soft);
+  white-space: nowrap;
+}
+
+.pr-table th.num,
+.pr-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pr-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.pr-table .pr-input {
+  min-height: 2.25rem;
+  min-width: 4.5rem;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.8125rem;
+}
+
+.pr-net-cell {
+  font-weight: 700;
+}
+
+@media (min-width: 960px) {
+  .pr-employee-cards {
+    display: none;
+  }
+
+  .pr-table-wrap {
+    display: block;
+  }
+}
+
+/* Sticky mobile actions */
+.pr-sticky-actions {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  padding: 0.75rem 0.85rem calc(0.75rem + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.96);
+  border-top: 1px solid var(--pr-line);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.pr-sticky-actions .pr-btn {
+  width: 100%;
+}
+
+.pr-sticky-actions .pr-btn-primary:only-child {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 768px) {
+  .payroll-page.has-sticky-actions {
+    padding-bottom: 0.5rem;
+  }
+
+  .pr-sticky-actions {
+    display: none;
+  }
+}
+
+/* Payslip print & modern view (Screenshot 5 design) */
+.payslip-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--pr-line);
+}
+
+.payslip-modern {
+  background: #ffffff;
+  color: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  padding: 1.5rem 1.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  max-width: 820px;
+  margin: 0 auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+}
+
+.ps-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 0.85rem;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.ps-brand {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.ps-logo,
+.ps-logo-img {
+  width: 3.25rem;
+  height: 3.25rem;
+  object-fit: contain;
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+  padding: 0.15rem;
+  background-color: #ffffff;
+  flex-shrink: 0;
+}
+
+.ps-logo-fallback {
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 0.5rem;
+  background-color: #0f172a;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1.25rem;
+  letter-spacing: 0.05em;
+  border: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.ps-brand-info h1 {
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.ps-brand-info p {
+  margin: 0.2rem 0 0;
+  font-size: 0.8125rem;
+  color: #475569;
+}
+
+.ps-title-block {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.ps-title-block h2 {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: 0.04em;
+}
+
+.ps-period-title {
+  margin: 0.15rem 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.ps-meta-line {
+  margin: 0.1rem 0;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+/* Employee Details Box */
+.ps-emp-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 0.85rem 1.15rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem 2rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.8125rem;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.ps-emp-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.ps-emp-label {
+  font-weight: 600;
+  color: #334155;
+  width: 7.5rem;
+  flex-shrink: 0;
+}
+
+.ps-emp-sep {
+  color: #94a3b8;
+  margin-right: 0.25rem;
+}
+
+.ps-emp-val {
+  font-weight: 500;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+/* 2-Column Earnings & Deductions */
+.ps-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.ps-table-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.ps-table-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.65rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ps-table-head.earnings {
+  background: #f0f7ff;
+  color: #1e3a8a;
+  border-bottom: 1px solid #dbeafe;
+}
+
+.ps-table-head.deductions {
+  background: #fff1f2;
+  color: #9f1239;
+  border-bottom: 1px solid #ffe4e6;
+}
+
+.ps-table-head.section {
+  background: #f0f7ff;
+  color: #1e3a8a;
+  border-bottom: 1px solid #dbeafe;
+}
+
+.ps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.ps-table tr td {
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+}
+
+.ps-table tr td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
+}
+
+.ps-table tr.total-row td {
+  font-weight: 700;
+  color: #0f172a;
+  background: #f8fafc;
+  border-top: 1.5px solid #cbd5e1;
+  border-bottom: none;
+  font-size: 0.875rem;
+  padding: 0.65rem 1rem;
+}
+
+/* Net Salary Banner */
+.ps-net-banner {
+  border-top: 2px solid #e2e8f0;
+  border-bottom: 2px solid #e2e8f0;
+  padding: 0.75rem 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.85rem;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.ps-net-left h3 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.ps-net-left p {
+  margin: 0.2rem 0 0;
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.ps-net-right {
+  font-size: 1.55rem;
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Full Width Section Cards */
+.ps-section-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  margin-bottom: 0.85rem;
+  background: #ffffff;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.ps-info-box {
+  margin: 0.75rem 1rem;
+  padding: 0.65rem 0.85rem;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 0.375rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: #1e40af;
+  line-height: 1.4;
+}
+
+.ps-info-icon {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
+/* Notes Section */
+.ps-notes {
+  margin-top: 0.85rem;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  font-size: 0.75rem;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.ps-notes h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.ps-notes ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.ps-notes li {
+  margin-bottom: 0.2rem;
+}
+
+
+/* ==========================================================================
+   Mobile & Tablet Responsiveness for Payslip Preview Modal & Modern Sheet
+   ========================================================================== */
+
+@media (max-width: 767px) {
+  .payslip-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-bottom: 0.85rem;
+    padding-bottom: 0.65rem;
+  }
+
+  .payslip-modal-actions .emp-btn {
+    width: 100%;
+    justify-content: center;
+    padding: 0.45rem 0.65rem;
+    font-size: 0.75rem;
+    min-height: 2.35rem;
+    white-space: nowrap;
+  }
+
+  .payslip-modal-actions .emp-btn-primary {
+    grid-column: 1 / -1;
+    font-size: 0.8125rem;
+    min-height: 2.5rem;
+  }
+
+  .payslip-modern {
+    padding: 0.85rem 0.75rem !important;
+    border-radius: 0.5rem;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+  }
+
+  .ps-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 0.85rem !important;
+    padding-bottom: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .ps-brand {
+    gap: 0.75rem;
+    width: 100%;
+  }
+
+  .ps-logo,
+  .ps-logo-img,
+  .ps-logo-fallback {
+    width: 2.75rem !important;
+    height: 2.75rem !important;
+  }
+
+  .ps-brand-info {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .ps-brand-info h1 {
+    font-size: 1.15rem;
+    line-height: 1.25;
+    word-break: break-word;
+  }
+
+  .ps-brand-info p {
+    font-size: 0.72rem;
+    line-height: 1.35;
+    word-break: break-word;
+  }
+
+  .ps-title-block {
+    text-align: left !important;
+    width: 100% !important;
+    padding: 0.6rem 0.75rem;
+    background: #f8fafc;
+    border-radius: 0.5rem;
+    border: 1px solid #e2e8f0;
+    box-sizing: border-box;
+  }
+
+  .ps-title-block h2 {
+    font-size: 1.25rem;
+    letter-spacing: 0.02em;
+    color: var(--pr-brand, #0d5c3d);
+  }
+
+  .ps-period-title {
+    font-size: 0.875rem;
+    margin: 0.1rem 0 0.25rem;
+  }
+
+  .ps-meta-line {
+    font-size: 0.7rem;
+    line-height: 1.3;
+  }
+
+  .ps-emp-box {
+    grid-template-columns: 1fr !important;
+    gap: 0.45rem !important;
+    padding: 0.65rem 0.75rem !important;
+    margin-bottom: 0.75rem !important;
+    font-size: 0.75rem !important;
+  }
+
+  .ps-emp-row {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+
+  .ps-emp-label {
+    width: 6.25rem !important;
+    min-width: 6.25rem !important;
+    font-size: 0.72rem;
+    flex-shrink: 0;
+  }
+
+  .ps-emp-sep {
+    margin-right: 0.15rem;
+  }
+
+  .ps-emp-val {
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    white-space: normal;
+  }
+
+  .ps-two-col {
+    grid-template-columns: 1fr !important;
+    gap: 0.75rem !important;
+    margin-bottom: 0.75rem;
+  }
+
+  .ps-table-head {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.7rem;
+  }
+
+  .ps-table tr td {
+    padding: 0.45rem 0.65rem !important;
+    font-size: 0.75rem !important;
+  }
+
+  .ps-table tr.total-row td {
+    padding: 0.55rem 0.65rem !important;
+    font-size: 0.8125rem !important;
+  }
+
+  .ps-net-banner {
+    padding: 0.65rem 0.75rem !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 0.4rem;
+    background: #f8fafc;
+    border-radius: 0.5rem;
+  }
+
+  .ps-net-left h3 {
+    font-size: 1.05rem;
+  }
+
+  .ps-net-left p {
+    font-size: 0.72rem;
+  }
+
+  .ps-net-right {
+    font-size: 1.3rem !important;
+    color: var(--pr-brand, #0d5c3d);
+  }
+
+  .ps-section-card {
+    margin-bottom: 0.75rem;
+  }
+
+  .ps-section-card td {
+    padding: 0.45rem 0.65rem !important;
+    font-size: 0.75rem !important;
+  }
+
+  .ps-info-box {
+    margin: 0.5rem 0.65rem;
+    padding: 0.5rem 0.65rem;
+    font-size: 0.7rem;
+  }
+
+  .ps-notes {
+    font-size: 0.7rem;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1024px) {
+  .payslip-modern {
+    padding: 1.25rem !important;
+  }
+
+  .ps-emp-box {
+    gap: 0.5rem 1rem !important;
+    padding: 0.75rem 1rem !important;
+  }
+
+  .ps-emp-label {
+    width: 6.75rem !important;
+  }
+
+  .ps-two-col {
+    gap: 0.75rem !important;
+  }
+}
+
+@media print {
+  @page {
+    margin: 8mm 10mm;
+    size: auto;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Hide app navigation and shell */
+  header, nav, aside, .emp-page-header, .emp-filter-card, .emp-table-wrap, .emp-pagination,
+  .payslip-no-print, [role="dialog"] > button:last-child {
+    display: none !important;
+  }
+
+  /* Reset Radix Dialog container so it flows onto pages naturally */
+  [role="dialog"],
+  [data-radix-portal],
+  [data-radix-popper-content-wrapper],
+  .fixed,
+  .inset-0 {
+    position: static !important;
+    transform: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Ensure the payslip modern element prints cleanly */
+  .payslip-modern {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+    background: #ffffff !important;
+  }
+
+  .payslip-modern * {
+    visibility: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+

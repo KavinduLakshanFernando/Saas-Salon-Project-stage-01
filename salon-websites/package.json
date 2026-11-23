@@ -1,0 +1,26 @@
+{
+  "name": "salon-websites",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node init && next dev -p 3002",
+    "build": "node init && next build",
+    "start": "node init && next start -p 3002",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "lucide-react": "^1.60.0",
+    "next": "16.3.8",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "salon-saas": "file:.."
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20.19.43",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

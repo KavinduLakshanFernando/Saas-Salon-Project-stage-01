@@ -1,0 +1,23 @@
+import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
+import { DatabaseModule } from '../database/database.module';
+import { SuperAdminDashboardController } from './dashboard/super-admin-dashboard.controller';
+import { SuperAdminDashboardService } from './dashboard/super-admin-dashboard.service';
+import { SalonsModule } from './salons/salons.module';
+import { SuperAdminController } from './super-admin.controller';
+import { DiagnosticController } from './diagnostic.controller';
+
+import { SuperAdminSalonAnalyticsModule } from './salon-analytics/super-admin-salon-analytics.module';
+import { AdminSmsController } from './sms/admin-sms.controller';
+
+@Module({
+  imports: [AuthModule, DatabaseModule, SalonsModule, SuperAdminSalonAnalyticsModule],
+  controllers: [
+    SuperAdminController,
+    DiagnosticController,
+    SuperAdminDashboardController,
+    AdminSmsController,
+  ],
+  providers: [SuperAdminDashboardService],
+})
+export class SuperAdminModule {}

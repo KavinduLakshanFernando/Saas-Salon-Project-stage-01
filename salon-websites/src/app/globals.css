@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+:root {
+  --salon-primary: #7c3aed;
+  --salon-primary-hover: #6d28d9;
+  --salon-primary-light: #f5f3ff;
+  --salon-text-primary: #0f172a;
+  --salon-text-secondary: #475569;
+}
+
+body {
+  color: var(--salon-text-primary);
+  background-color: #ffffff;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  margin: 0;
+  padding: 0;
+}
+

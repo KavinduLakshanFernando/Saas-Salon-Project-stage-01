@@ -1,0 +1,284 @@
+/**
+ * Salon Admin brand color overrides.
+ * Inside .salon-theme-root all elements follow the dynamic tenant brand tokens.
+ * Default primary: #7C3AED (Vibrant Purple).
+ */
+
+.salon-theme-root {
+  --sd-primary: var(--brand-primary, #7c3aed);
+  --sd-primary-light: var(--brand-soft, #f5f3ff);
+  --sd-primary-dark: var(--brand-hover, #6d28d9);
+  --sd-info: var(--brand-primary, #7c3aed);
+  --sd-info-light: var(--brand-soft, #f5f3ff);
+  --pos-primary-light: var(--brand-soft, #f5f3ff);
+  --sale-primary-light: var(--brand-soft, #f5f3ff);
+  --sub-primary-soft: var(--brand-soft, #f5f3ff);
+  --s360-brand: var(--brand-primary, #7c3aed);
+  --s360-brand-hover: var(--brand-hover, #6d28d9);
+  --s360-brand-soft: var(--brand-soft, #f5f3ff);
+  --s360-brand-dot: var(--brand-primary, #7c3aed);
+}
+
+/* Header profile chip */
+.salon-theme-root .salon-brand-avatar {
+  background: var(--brand-soft, #f5f3ff) !important;
+  color: var(--brand-primary, #7c3aed) !important;
+  border: 1px solid var(--brand-border, #ddd6fe) !important;
+}
+
+.salon-theme-root .salon-brand-text {
+  color: var(--brand-primary, #7c3aed) !important;
+}
+
+/* Period filters + primary buttons from shared dashboard CSS */
+.salon-theme-root .s360-period-btn.active,
+.salon-theme-root .sd-filter-btn.active {
+  background: var(--brand-primary, #7c3aed) !important;
+  border-color: var(--brand-primary, #7c3aed) !important;
+  color: var(--brand-foreground, #ffffff) !important;
+}
+
+.salon-theme-root .s360-period-btn:hover:not(.active) {
+  border-color: var(--brand-primary, #7c3aed);
+  color: var(--brand-primary, #7c3aed);
+  background: var(--brand-soft, #f5f3ff);
+}
+
+.salon-theme-root .s360-kpi-value.green {
+  color: var(--brand-primary, #7c3aed) !important;
+}
+
+.salon-theme-root .s360-btn-primary,
+.salon-theme-root .s360-btn-primary:visited {
+  background: var(--brand-primary, #7c3aed) !important;
+  color: var(--brand-foreground, #ffffff) !important;
+}
+
+.salon-theme-root .s360-btn-primary:hover {
+  background: var(--brand-hover, #6d28d9) !important;
+}
+
+/* Brand utility classes used as accent */
+.salon-theme-root .s360-dot.green,
+.salon-theme-root .sd360-kpi-compact-value.green {
+  color: var(--brand-primary, #7c3aed);
+}
+
+.salon-theme-root .s360-dot.green {
+  background: var(--brand-primary, #7c3aed) !important;
+  color: transparent;
+}
+
+.salon-theme-root .sd360-kpi-icon {
+  background: var(--brand-soft, #f5f3ff) !important;
+  color: var(--brand-primary, #7c3aed) !important;
+}
+
+.salon-theme-root .sd360-kpi-compact-value.green {
+  color: var(--brand-primary, #7c3aed) !important;
+}
+
+.salon-theme-root .sd360-appt-time {
+  color: var(--brand-primary, #7c3aed) !important;
+}
+
+.salon-theme-root .s360-kpi-value,
+.salon-theme-root .s360-link,
+.salon-theme-root .s360-stat-up {
+  color: var(--brand-primary, #7c3aed);
+}
+
+.salon-theme-root .s360-alert-icon.info,
+.salon-theme-root .s360-timeline-icon.info,
+.salon-theme-root .s360-pay-icon.info {
+  background: var(--brand-soft, #f5f3ff) !important;
+  color: var(--brand-primary, #7c3aed) !important;
+}
+
+/* Keep true success icons semantic green */
+.salon-theme-root .s360-pay-icon.success,
+.salon-theme-root .s360-timeline-icon.success,
+.salon-theme-root .settings-preview-success {
+  /* intentional semantic green */
+}
+
+.salon-theme-root .sd-kpi-icon.purple,
+.salon-theme-root .sd-kpi-icon.blue {
+  background: var(--brand-soft, #f5f3ff) !important;
+  color: var(--brand-primary, #7c3aed) !important;
+}
+
+.salon-theme-root .sd-quick-action-icon.green,
+.salon-theme-root .sd-quick-action-icon.purple,
+.salon-theme-root .sd-quick-action-icon.blue {
+  background: var(--brand-soft, #f5f3ff) !important;
+  color: var(--brand-primary, #7c3aed) !important;
+}
+
+/* ── Universal primary button & accent overrides in salon workspace & portals ── */
+.salon-theme-root .bg-primary,
+.salon-theme-root button.bg-primary,
+.salon-theme-root a.bg-primary,
+.salon-theme-root [data-slot='button'].bg-primary,
+body:has(.salon-theme-root) [role="dialog"] .bg-primary,
+body:has(.salon-theme-root) [role="dialog"] button.bg-primary,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .bg-primary,
+body:has(.salon-theme-root) [data-slot="dialog-content"] button.bg-primary,
+body:has(.salon-theme-root) [data-radix-popper-content-wrapper] .bg-primary {
+  background-color: var(--brand-primary, #7c3aed) !important;
+  color: var(--brand-foreground, #ffffff) !important;
+}
+
+.salon-theme-root .bg-primary:hover:not(:disabled),
+.salon-theme-root button.bg-primary:hover:not(:disabled),
+.salon-theme-root a.bg-primary:hover,
+.salon-theme-root [data-slot='button'].bg-primary:hover:not(:disabled),
+body:has(.salon-theme-root) [role="dialog"] .bg-primary:hover:not(:disabled),
+body:has(.salon-theme-root) [role="dialog"] button.bg-primary:hover:not(:disabled),
+body:has(.salon-theme-root) [data-slot="dialog-content"] .bg-primary:hover:not(:disabled),
+body:has(.salon-theme-root) [data-slot="dialog-content"] button.bg-primary:hover:not(:disabled) {
+  background-color: var(--brand-hover, #6d28d9) !important;
+  color: var(--brand-foreground, #ffffff) !important;
+}
+
+.salon-theme-root .text-primary,
+body:has(.salon-theme-root) [role="dialog"] .text-primary,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .text-primary {
+  color: var(--brand-primary, #7c3aed) !important;
+}
+
+.salon-theme-root .border-primary,
+body:has(.salon-theme-root) [role="dialog"] .border-primary,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .border-primary {
+  border-color: var(--brand-primary, #7c3aed) !important;
+}
+
+.salon-theme-root .ring-primary,
+body:has(.salon-theme-root) [role="dialog"] .ring-primary,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .ring-primary {
+  --tw-ring-color: var(--brand-ring, #7c3aed) !important;
+}
+
+/* ── Dynamic mapping: all purple elements follow admin brand color ── */
+.salon-theme-root .bg-purple-600,
+.salon-theme-root .bg-purple-700,
+.salon-theme-root .bg-purple-800,
+.salon-theme-root button.bg-purple-600,
+.salon-theme-root button.bg-purple-700,
+.salon-theme-root a.bg-purple-600,
+.salon-theme-root a.bg-purple-700,
+body:has(.salon-theme-root) [role="dialog"] .bg-purple-600,
+body:has(.salon-theme-root) [role="dialog"] .bg-purple-700,
+body:has(.salon-theme-root) [role="dialog"] button.bg-purple-600,
+body:has(.salon-theme-root) [role="dialog"] button.bg-purple-700,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .bg-purple-600,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .bg-purple-700,
+body:has(.salon-theme-root) [data-slot="dialog-content"] button.bg-purple-600,
+body:has(.salon-theme-root) [data-slot="dialog-content"] button.bg-purple-700 {
+  background-color: var(--brand-primary, #7c3aed) !important;
+  color: var(--brand-foreground, #ffffff) !important;
+}
+
+.salon-theme-root .hover\:bg-purple-700:hover,
+.salon-theme-root .hover\:bg-purple-800:hover,
+.salon-theme-root button.hover\:bg-purple-700:hover,
+.salon-theme-root button.hover\:bg-purple-800:hover,
+.salon-theme-root a.hover\:bg-purple-700:hover,
+.salon-theme-root a.hover\:bg-purple-800:hover,
+body:has(.salon-theme-root) [role="dialog"] .hover\:bg-purple-700:hover,
+body:has(.salon-theme-root) [role="dialog"] .hover\:bg-purple-800:hover,
+body:has(.salon-theme-root) [role="dialog"] button.hover\:bg-purple-700:hover,
+body:has(.salon-theme-root) [role="dialog"] button.hover\:bg-purple-800:hover,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .hover\:bg-purple-700:hover,
+body:has(.salon-theme-root) [data-slot="dialog-content"] button.hover\:bg-purple-700:hover {
+  background-color: var(--brand-hover, #6d28d9) !important;
+  color: var(--brand-foreground, #ffffff) !important;
+}
+
+.salon-theme-root .text-purple-500,
+.salon-theme-root .text-purple-600,
+.salon-theme-root .text-purple-700,
+.salon-theme-root .text-purple-800,
+.salon-theme-root .text-purple-900,
+.salon-theme-root [class*="text-[#7c3aed]"],
+body:has(.salon-theme-root) [role="dialog"] .text-purple-500,
+body:has(.salon-theme-root) [role="dialog"] .text-purple-600,
+body:has(.salon-theme-root) [role="dialog"] .text-purple-700,
+body:has(.salon-theme-root) [role="dialog"] .text-purple-800,
+body:has(.salon-theme-root) [role="dialog"] .text-purple-900,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .text-purple-500,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .text-purple-600,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .text-purple-700,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .text-purple-800,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .text-purple-900 {
+  color: var(--brand-primary, #7c3aed) !important;
+}
+
+.salon-theme-root .hover\:text-purple-700:hover,
+.salon-theme-root .hover\:text-purple-800:hover,
+body:has(.salon-theme-root) [role="dialog"] .hover\:text-purple-700:hover,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .hover\:text-purple-700:hover {
+  color: var(--brand-hover, #6d28d9) !important;
+}
+
+.salon-theme-root .bg-purple-50,
+.salon-theme-root .bg-purple-100,
+body:has(.salon-theme-root) [role="dialog"] .bg-purple-50,
+body:has(.salon-theme-root) [role="dialog"] .bg-purple-100,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .bg-purple-50,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .bg-purple-100 {
+  background-color: var(--brand-soft, #f5f3ff) !important;
+}
+
+.salon-theme-root .hover\:bg-purple-50:hover,
+.salon-theme-root .hover\:bg-purple-100:hover,
+body:has(.salon-theme-root) [role="dialog"] .hover\:bg-purple-50:hover,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .hover\:bg-purple-50:hover {
+  background-color: var(--brand-soft-strong, #ede9fe) !important;
+}
+
+.salon-theme-root .border-purple-100,
+.salon-theme-root .border-purple-200,
+.salon-theme-root .border-purple-300,
+body:has(.salon-theme-root) [role="dialog"] .border-purple-100,
+body:has(.salon-theme-root) [role="dialog"] .border-purple-200,
+body:has(.salon-theme-root) [role="dialog"] .border-purple-300,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .border-purple-100,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .border-purple-200,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .border-purple-300 {
+  border-color: var(--brand-border, #ddd6fe) !important;
+}
+
+.salon-theme-root .border-purple-500,
+.salon-theme-root .border-purple-600,
+body:has(.salon-theme-root) [role="dialog"] .border-purple-500,
+body:has(.salon-theme-root) [role="dialog"] .border-purple-600,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .border-purple-500,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .border-purple-600 {
+  border-color: var(--brand-primary, #7c3aed) !important;
+}
+
+.salon-theme-root .hover\:border-purple-200:hover,
+.salon-theme-root .hover\:border-purple-300:hover,
+body:has(.salon-theme-root) [role="dialog"] .hover\:border-purple-200:hover,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .hover\:border-purple-200:hover {
+  border-color: var(--brand-primary, #7c3aed) !important;
+}
+
+.salon-theme-root .ring-purple-500,
+.salon-theme-root .focus\:ring-purple-500:focus,
+.salon-theme-root .focus-visible\:ring-purple-500:focus-visible,
+body:has(.salon-theme-root) [role="dialog"] .ring-purple-500,
+body:has(.salon-theme-root) [role="dialog"] .focus\:ring-purple-500:focus,
+body:has(.salon-theme-root) [role="dialog"] .focus-visible\:ring-purple-500:focus-visible,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .ring-purple-500,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .focus\:ring-purple-500:focus,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .focus-visible\:ring-purple-500:focus-visible {
+  --tw-ring-color: var(--brand-ring, #7c3aed) !important;
+}
+
+.salon-theme-root .focus\:border-purple-500:focus,
+body:has(.salon-theme-root) [role="dialog"] .focus\:border-purple-500:focus,
+body:has(.salon-theme-root) [data-slot="dialog-content"] .focus\:border-purple-500:focus {
+  border-color: var(--brand-primary, #7c3aed) !important;
+}

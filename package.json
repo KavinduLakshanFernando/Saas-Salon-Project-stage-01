@@ -1,0 +1,20 @@
+{
+  "name": "salon-saas",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Dart Smart Salon - multi-tenant salon management platform",
+  "scripts": {
+    "dev": "node init && concurrently \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:website\" \"npm run dev:salon-websites\"",
+    "dev:frontend": "node init && npm run dev --prefix frontend",
+    "dev:backend": "node init && npm run start:dev --prefix backend",
+    "dev:website": "node init && npm run dev --prefix website",
+    "dev:salon-websites": "node init && npm run dev --prefix salon-websites",
+    "install:all": "npm install && npm install --prefix frontend && npm install --prefix backend && npm install --prefix website && npm install --prefix salon-websites",
+    "build": "node init && npm run build --prefix website && npm run build --prefix salon-websites && npm run build --prefix frontend && npm run build --prefix backend",
+    "lint": "npm run lint --prefix website && npm run lint --prefix salon-websites && npm run lint --prefix frontend && npm run lint --prefix backend",
+    "format": "npm run format --prefix frontend && npm run format --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

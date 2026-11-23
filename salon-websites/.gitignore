@@ -1,0 +1,23 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# Next.js build output & cache
+/.next/
+/out/
+/build
+
+# Testing
+/coverage
+
+# Environment
+.env*
+!.env.example
+
+# OS & misc
+.DS_Store
+*.pem
+*.tsbuildinfo
+next-env.d.ts
+

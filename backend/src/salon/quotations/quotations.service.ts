@@ -1,0 +1,1526 @@
+import { randomBytes } from 'crypto';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../../database/prisma.service';
+import { buildPaginatedResponse, resolvePagination } from '../../common/dto/pagination.dto';
+import { AuthenticatedUser } from '../../auth/interfaces/auth.interface';
+import { TenantSchemaService } from '../../tenant/services/tenant-schema.service';
+import { tenantTable } from '../../tenant/utils/schema-name.util';
+import { APP_NAME_FALLBACK } from '../../config/brand.constants';
+import { logAudit } from '../utils/audit.util';
+import { PosService } from '../pos/pos.service';
+import {
+  CancelQuotationDto,
+  ConvertQuotationDto,
+  CreateQuotationDto,
+  ListQuotationsQueryDto,
+  UpdateQuotationDto,
+} from './dto/quotation.dto';
+import { MessagingService } from './messaging.service';
+import {
+  buildSmsQuotationCancelledMessage,
+  buildSmsQuotationMessage,
+  buildWhatsAppQuotationMessage,
+  messageUsesPlatformAsPrimaryBrand,
+  resolveQuotationSalonBrand,
+  toPublicQuotationView,
+} from './quotation-branding';
+import { normalizePhoneE164, phoneDigitsForWhatsApp } from './phone.util';
+import {
+  calculateQuotationTotals,
+  resolveDisplayStatus,
+} from './quotation-money';
+import {
+  formatSriLankaDate,
+  sriLankaTodayIso,
+  toDateOnlyString,
+} from '../../common/utils/sri-lanka-time';
+
+@Injectable()
+export class QuotationsService {
+  constructor(
+    private readonly tenantSchemaService: TenantSchemaService,
+    private readonly prisma: PrismaService,
+    private readonly messagingService: MessagingService,
+    private readonly posService: PosService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  private async ensureQuotationsTableSynced(
+    tx: { $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<unknown> },
+    schemaName: string,
+  ) {
+    const quotations = tenantTable(schemaName, 'quotations');
+    try {
+      await tx.$executeRawUnsafe(
+        `ALTER TABLE ${quotations} ADD COLUMN IF NOT EXISTS cancel_reason VARCHAR(255)`,
+      );
+      await tx.$executeRawUnsafe(
+        `ALTER TABLE ${quotations} ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP`,
+      );
+    } catch {
+      // Ignore if concurrent or already present
+    }
+  }
+
+  private statusCast(schemaName: string, paramIndex: number) {
+    return `$${paramIndex}::text::"${schemaName}".quotation_status`;
+  }
+
+  private channelCast(schemaName: string, paramIndex: number) {
+    return `$${paramIndex}::text::"${schemaName}".quotation_message_channel`;
+  }
+
+  private messageStatusCast(schemaName: string, paramIndex: number) {
+    return `$${paramIndex}::text::"${schemaName}".quotation_message_status`;
+  }
+
+  private async resolveSalonBranding(tenantId: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        name: true,
+        phone: true,
+        email: true,
+        logoUrl: true,
+        primaryColor: true,
+      },
+    });
+    if (!tenant) {
+      throw new NotFoundException('Tenant not found');
+    }
+    return tenant;
+  }
+
+  private publicBaseUrl() {
+    return (
+      this.configService.get<string>('PUBLIC_APP_URL') ||
+      this.configService.get<string>('FRONTEND_URL') ||
+      'http://localhost:5173'
+    ).replace(/\/$/, '');
+  }
+
+  private buildPublicUrl(token: string) {
+    return `${this.publicBaseUrl()}/q/${token}`;
+  }
+
+  private newPublicToken() {
+    return randomBytes(24).toString('base64url');
+  }
+
+  /** Concurrent-safe QT number: per-schema advisory lock + max+1. */
+  private async nextQuotationNo(
+    tx: {
+      $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<unknown>;
+      $queryRawUnsafe: <T>(query: string, ...values: unknown[]) => Promise<T>;
+    },
+    schemaName: string,
+    quotationsTable: string,
+  ): Promise<string> {
+    // Must use executeRaw — advisory lock returns void and breaks $queryRaw deserialize.
+    await tx.$executeRawUnsafe(
+      `SELECT pg_advisory_xact_lock(hashtext($1::text))`,
+      `${schemaName}:quotations`,
+    );
+    const rows = await tx.$queryRawUnsafe<Array<{ max: number | null }>>(
+      `SELECT MAX(
+         CASE
+           WHEN quotation_no ~ '^QT-[0-9]+$'
+           THEN SUBSTRING(quotation_no FROM 4)::int
+           ELSE NULL
+         END
+       )::int AS max
+       FROM ${quotationsTable}`,
+    );
+    const next = Number(rows[0]?.max ?? 0) + 1;
+    return `QT-${String(next).padStart(6, '0')}`;
+  }
+
+  async create(
+    schemaName: string,
+    tenantId: string,
+    dto: CreateQuotationDto,
+    userId: string,
+  ) {
+    const salon = await this.resolveSalonBranding(tenantId);
+    const salonNameSnapshot = resolveQuotationSalonBrand(salon.name);
+    const quotations = tenantTable(schemaName, 'quotations');
+    const itemsTable = tenantTable(schemaName, 'quotation_items');
+    const services = tenantTable(schemaName, 'services');
+    const customers = tenantTable(schemaName, 'customers');
+    const branches = tenantTable(schemaName, 'branches');
+    const status = dto.status ?? 'DRAFT';
+    const statusCast = this.statusCast(schemaName, 12);
+
+    return this.tenantSchemaService.withTenantSchema(schemaName, async ({ tx }) => {
+      const branch = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT id FROM ${branches} WHERE id = $1::uuid AND status = 'ACTIVE' LIMIT 1`,
+        dto.branchId,
+      );
+      if (!branch.length) throw new NotFoundException('Active branch not found');
+
+      const customer = await tx.$queryRawUnsafe<Array<{ id: string; phone: string | null }>>(
+        `SELECT id, phone FROM ${customers} WHERE id = $1::uuid AND status = 'ACTIVE' LIMIT 1`,
+        dto.customerId,
+      );
+      if (!customer.length) throw new NotFoundException('Customer not found');
+
+      const resolvedItems: Array<{
+        serviceId: string;
+        descriptionSnapshot: string;
+        quantity: number;
+        originalServicePrice: number;
+        quotationUnitPrice: number;
+        discountAmount: number;
+        employeeId: string | null;
+      }> = [];
+
+      for (const item of dto.items) {
+        const svc = await tx.$queryRawUnsafe<
+          Array<{ id: string; name: string; price: string; is_active: boolean }>
+        >(
+          `SELECT id, name, price::text, is_active FROM ${services} WHERE id = $1::uuid LIMIT 1`,
+          item.serviceId,
+        );
+        if (!svc.length || !svc[0].is_active) {
+          throw new NotFoundException(`Service not found or inactive: ${item.serviceId}`);
+        }
+        resolvedItems.push({
+          serviceId: item.serviceId,
+          descriptionSnapshot: svc[0].name,
+          quantity: item.quantity,
+          originalServicePrice: Number(svc[0].price),
+          quotationUnitPrice: item.quotationUnitPrice,
+          discountAmount: item.discountAmount ?? 0,
+          employeeId: item.employeeId ?? null,
+        });
+      }
+
+      let totals;
+      try {
+        totals = calculateQuotationTotals(
+          resolvedItems.map((i) => ({
+            quantity: i.quantity,
+            quotationUnitPrice: i.quotationUnitPrice,
+            discountAmount: i.discountAmount,
+          })),
+          dto.discountAmount ?? 0,
+          0,
+        );
+      } catch (error) {
+        throw new BadRequestException(error instanceof Error ? error.message : 'Invalid totals');
+      }
+
+      const quotationNo = await this.nextQuotationNo(tx, schemaName, quotations);
+      const publicToken = this.newPublicToken();
+      const quotationDate =
+        toDateOnlyString(dto.quotationDate) ?? sriLankaTodayIso();
+      const validUntil = toDateOnlyString(dto.validUntil ?? null);
+
+      const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+        `INSERT INTO ${quotations}
+           (quotation_no, branch_id, customer_id, quotation_date, valid_until,
+            subtotal, discount_amount, tax_amount, total_amount, status,
+            customer_notes, internal_notes, salon_name_snapshot, public_token, created_by)
+         VALUES (
+           $1, $2::uuid, $3::uuid, $4::date, $5::date,
+           $6::numeric, $7::numeric, $8::numeric, $9::numeric, ${statusCast},
+           $10, $11, $13, $14, $15::uuid
+         )
+         RETURNING id`,
+        quotationNo,
+        dto.branchId,
+        dto.customerId,
+        quotationDate,
+        validUntil,
+        totals.subtotal,
+        totals.discountAmount,
+        totals.taxAmount,
+        totals.totalAmount,
+        dto.customerNotes ?? null,
+        dto.internalNotes ?? null,
+        status,
+        salonNameSnapshot,
+        publicToken,
+        userId,
+      );
+
+      const quotationId = rows[0].id;
+      let sort = 0;
+      for (let i = 0; i < resolvedItems.length; i++) {
+        const item = resolvedItems[i];
+        const line = totals.lines[i];
+        await tx.$queryRawUnsafe(
+          `INSERT INTO ${itemsTable}
+             (quotation_id, service_id, description_snapshot, quantity,
+              original_service_price, quotation_unit_price, discount_amount, line_total,
+              employee_id, sort_order)
+           VALUES (
+             $1::uuid, $2::uuid, $3, $4::numeric,
+             $5::numeric, $6::numeric, $7::numeric, $8::numeric,
+             $9::uuid, $10
+           )`,
+          quotationId,
+          item.serviceId,
+          item.descriptionSnapshot,
+          item.quantity,
+          item.originalServicePrice,
+          item.quotationUnitPrice,
+          line.discountAmount,
+          line.lineTotal,
+          item.employeeId,
+          sort++,
+        );
+      }
+
+      await logAudit(tx, schemaName, {
+        userId,
+        action: 'QUOTATION_CREATE',
+        entityType: 'quotation',
+        entityId: quotationId,
+        details: { quotationNo, totalAmount: totals.totalAmount, status },
+      });
+
+      return {
+        id: quotationId,
+        quotationNo,
+        publicToken,
+        publicUrl: this.buildPublicUrl(publicToken),
+        totalAmount: totals.totalAmount,
+        status,
+        salonName: salonNameSnapshot,
+      };
+    });
+  }
+
+  async list(schemaName: string, query: ListQuotationsQueryDto) {
+    const quotations = tenantTable(schemaName, 'quotations');
+    const customers = tenantTable(schemaName, 'customers');
+    const branches = tenantTable(schemaName, 'branches');
+    const { page, limit, offset } = resolvePagination(query.page, query.limit);
+
+    const conditions: string[] = ['1=1'];
+    const params: unknown[] = [];
+    let idx = 1;
+
+    if (query.branchId) {
+      conditions.push(`q.branch_id = $${idx++}::uuid`);
+      params.push(query.branchId);
+    }
+    if (query.customerId) {
+      conditions.push(`q.customer_id = $${idx++}::uuid`);
+      params.push(query.customerId);
+    }
+    if (query.status && query.status !== 'EXPIRED') {
+      conditions.push(`q.status = $${idx++}::text::"${schemaName}".quotation_status`);
+      params.push(query.status);
+    }
+    if (query.status === 'EXPIRED') {
+      conditions.push(
+        `q.status = 'SENT'::"${schemaName}".quotation_status AND q.valid_until IS NOT NULL AND q.valid_until < CURRENT_DATE`,
+      );
+    }
+    if (query.fromDate) {
+      conditions.push(`q.quotation_date >= $${idx++}::date`);
+      params.push(query.fromDate.slice(0, 10));
+    }
+    if (query.toDate) {
+      conditions.push(`q.quotation_date <= $${idx++}::date`);
+      params.push(query.toDate.slice(0, 10));
+    }
+    if (query.search?.trim()) {
+      conditions.push(
+        `(q.quotation_no ILIKE $${idx} OR c.name ILIKE $${idx} OR c.phone ILIKE $${idx})`,
+      );
+      params.push(`%${query.search.trim()}%`);
+      idx++;
+    }
+
+    const whereClause = conditions.join(' AND ');
+    const fromClause = `
+      FROM ${quotations} q
+      INNER JOIN ${customers} c ON q.customer_id = c.id
+      INNER JOIN ${branches} b ON q.branch_id = b.id
+      WHERE ${whereClause}`;
+
+    return this.tenantSchemaService.withTenantSchema(schemaName, async ({ tx }) => {
+      const countRows = await tx.$queryRawUnsafe<Array<{ count: bigint }>>(
+        `SELECT COUNT(*)::bigint AS count ${fromClause}`,
+        ...params,
+      );
+      const total = Number(countRows[0]?.count ?? 0);
+      const data = await tx.$queryRawUnsafe<Array<Record<string, unknown>>>(
+        `SELECT q.id, q.quotation_no AS "quotationNo",
+                q.branch_id AS "branchId", b.name AS "branchName",
+                q.customer_id AS "customerId", c.name AS "customerName", c.phone AS "customerPhone",
+                q.quotation_date::text AS "quotationDate",
+                q.valid_until::text AS "validUntil",
+                q.subtotal::float8 AS subtotal,
+                q.discount_amount::float8 AS "discountAmount",
+                q.total_amount::float8 AS "totalAmount",
+                q.status::text AS status,
+                q.salon_name_snapshot AS "salonNameSnapshot",
+                q.converted_sale_id AS "convertedSaleId",
+                q.created_at AS "createdAt"
+         ${fromClause}
+         ORDER BY q.created_at DESC
+         LIMIT $${idx} OFFSET $${idx + 1}`,
+        ...params,
+        limit,
+        offset,
+      );
+
+      const mapped = data.map((row) => ({
+        ...row,
+        displayStatus: resolveDisplayStatus(
+          String(row.status),
+          row.validUntil as string | null,
+        ),
+      }));
+
+      return buildPaginatedResponse(mapped, total, page, limit);
+    });
+  }
+
+  async getById(schemaName: string, id: string, tenantId: string) {
+    const detail = await this.loadQuotationDetail(schemaName, { id });
+    const salon = await this.resolveSalonBranding(tenantId);
+    return {
+      ...detail,
+      publicUrl: this.buildPublicUrl(detail.publicToken),
+      salon: {
+        name: salon.name,
+        phone: salon.phone,
+        email: salon.email,
+        logoUrl: salon.logoUrl,
+        primaryColor: salon.primaryColor,
+      },
+      platformName: APP_NAME_FALLBACK,
+    };
+  }
+
+  async update(
+    schemaName: string,
+    tenantId: string,
+    id: string,
+    dto: UpdateQuotationDto,
+    userId: string,
+  ) {
+    const existing = await this.loadQuotationDetail(schemaName, { id });
+    if (!['DRAFT', 'SENT'].includes(existing.status)) {
+      throw new BadRequestException('Only draft or sent quotations can be edited');
+    }
+    if (existing.status === 'SENT' && dto.items) {
+      // Material change on SENT — allow but keep status SENT for re-send
+    }
+
+    const createDto: CreateQuotationDto = {
+      branchId: dto.branchId ?? existing.branchId,
+      customerId: dto.customerId ?? existing.customerId,
+      quotationDate: dto.quotationDate ?? existing.quotationDate,
+      validUntil: dto.validUntil ?? existing.validUntil ?? undefined,
+      items:
+        dto.items ??
+        existing.items.map((item) => ({
+          serviceId: item.serviceId!,
+          quantity: item.quantity,
+          quotationUnitPrice: item.quotationUnitPrice,
+          discountAmount: item.discountAmount,
+          employeeId: item.employeeId ?? undefined,
+        })),
+      discountAmount: dto.discountAmount ?? existing.discountAmount,
+      customerNotes: dto.customerNotes ?? existing.customerNotes ?? undefined,
+      internalNotes: dto.internalNotes ?? existing.internalNotes ?? undefined,
+      status: existing.status === 'SENT' ? 'SENT' : 'DRAFT',
+    };
+
+    // Replace by cancelling old token path: update in place
+    return this.replaceQuotation(schemaName, tenantId, id, createDto, userId, existing.status);
+  }
+
+  private async replaceQuotation(
+    schemaName: string,
+    tenantId: string,
+    id: string,
+    dto: CreateQuotationDto,
+    userId: string,
+    keepStatus: string,
+  ) {
+    const salon = await this.resolveSalonBranding(tenantId);
+    const quotations = tenantTable(schemaName, 'quotations');
+    const itemsTable = tenantTable(schemaName, 'quotation_items');
+    const services = tenantTable(schemaName, 'services');
+
+    return this.tenantSchemaService.withTenantSchema(schemaName, async ({ tx }) => {
+      const resolvedItems = [];
+      for (const item of dto.items) {
+        const svc = await tx.$queryRawUnsafe<
+          Array<{ id: string; name: string; price: string; is_active: boolean }>
+        >(
+          `SELECT id, name, price::text, is_active FROM ${services} WHERE id = $1::uuid LIMIT 1`,
+          item.serviceId,
+        );
+        if (!svc.length || !svc[0].is_active) {
+          throw new NotFoundException(`Service not found or inactive: ${item.serviceId}`);
+        }
+        resolvedItems.push({
+          serviceId: item.serviceId,
+          descriptionSnapshot: svc[0].name,
+          quantity: item.quantity,
+          originalServicePrice: Number(svc[0].price),
+          quotationUnitPrice: item.quotationUnitPrice,
+          discountAmount: item.discountAmount ?? 0,
+          employeeId: item.employeeId ?? null,
+        });
+      }
+
+      const totals = calculateQuotationTotals(
+        resolvedItems.map((i) => ({
+          quantity: i.quantity,
+          quotationUnitPrice: i.quotationUnitPrice,
+          discountAmount: i.discountAmount,
+        })),
+        dto.discountAmount ?? 0,
+        0,
+      );
+
+      await tx.$queryRawUnsafe(
+        `UPDATE ${quotations}
+         SET branch_id = $2::uuid,
+             customer_id = $3::uuid,
+             quotation_date = $4::date,
+             valid_until = $5::date,
+             subtotal = $6::numeric,
+             discount_amount = $7::numeric,
+             tax_amount = $8::numeric,
+             total_amount = $9::numeric,
+             customer_notes = $10,
+             internal_notes = $11,
+             salon_name_snapshot = $12,
+             updated_at = NOW()
+         WHERE id = $1::uuid`,
+        id,
+        dto.branchId,
+        dto.customerId,
+        toDateOnlyString(dto.quotationDate) ?? sriLankaTodayIso(),
+        toDateOnlyString(dto.validUntil ?? null),
+        totals.subtotal,
+        totals.discountAmount,
+        totals.taxAmount,
+        totals.totalAmount,
+        dto.customerNotes ?? null,
+        dto.internalNotes ?? null,
+        resolveQuotationSalonBrand(salon.name),
+      );
+
+      await tx.$queryRawUnsafe(`DELETE FROM ${itemsTable} WHERE quotation_id = $1::uuid`, id);
+      let sort = 0;
+      for (let i = 0; i < resolvedItems.length; i++) {
+        const item = resolvedItems[i];
+        const line = totals.lines[i];
+        await tx.$queryRawUnsafe(
+          `INSERT INTO ${itemsTable}
+             (quotation_id, service_id, description_snapshot, quantity,
+              original_service_price, quotation_unit_price, discount_amount, line_total,
+              employee_id, sort_order)
+           VALUES ($1::uuid, $2::uuid, $3, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric, $9::uuid, $10)`,
+          id,
+          item.serviceId,
+          item.descriptionSnapshot,
+          item.quantity,
+          item.originalServicePrice,
+          item.quotationUnitPrice,
+          line.discountAmount,
+          line.lineTotal,
+          item.employeeId,
+          sort++,
+        );
+      }
+
+      await logAudit(tx, schemaName, {
+        userId,
+        action: 'QUOTATION_UPDATE',
+        entityType: 'quotation',
+        entityId: id,
+        details: { status: keepStatus },
+      });
+
+      return { id, status: keepStatus };
+    });
+  }
+
+  async cancel(
+    schemaName: string,
+    tenantId: string,
+    id: string,
+    userId: string,
+    dto?: CancelQuotationDto,
+  ) {
+    const detail = await this.loadQuotationDetail(schemaName, { id });
+    if (['CONVERTED', 'CANCELLED'].includes(detail.status)) {
+      throw new BadRequestException('Quotation cannot be cancelled');
+    }
+
+    const salon = await this.resolveSalonBranding(tenantId);
+    const salonName = resolveQuotationSalonBrand(salon.name);
+    const reason = (dto?.reason ?? '').trim() || null;
+    const shouldNotify = dto?.notifyCustomer !== false;
+
+    const quotations = tenantTable(schemaName, 'quotations');
+    const statusCast = this.statusCast(schemaName, 3);
+    await this.tenantSchemaService.withTenantSchema(schemaName, async ({ tx }) => {
+      await this.ensureQuotationsTableSynced(tx, schemaName);
+      await tx.$queryRawUnsafe(
+        `UPDATE ${quotations}
+         SET status = ${statusCast},
+             cancel_reason = $2,
+             cancelled_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $1::uuid`,
+        id,
+        reason,
+        'CANCELLED',
+      );
+      await logAudit(tx, schemaName, {
+        userId,
+        action: 'QUOTATION_CANCEL',
+        entityType: 'quotation',
+        entityId: id,
+        details: { reason, notifyCustomer: shouldNotify },
+      });
+    });
+
+    let messageSent = false;
+    let messageError: string | null = null;
+
+    if (shouldNotify && detail.customerPhone) {
+      const e164 = normalizePhoneE164(detail.customerPhone);
+      if (e164) {
+        const message = buildSmsQuotationCancelledMessage({
+          quotationNo: detail.quotationNo,
+          salonName,
+          reason,
+        });
+
+        try {
+          const result = await this.messagingService.sendSms(e164, message, tenantId, {
+            quotationId: id,
+            purpose: 'QUOTATION_CANCELLED',
+            idempotencyKey: `quote-cancel-${id}-${Date.now()}`,
+          });
+          await this.recordMessage(schemaName, {
+            quotationId: id,
+            channel: 'SMS',
+            recipient: e164,
+            message,
+            status: result.status,
+            providerMessageId: result.providerMessageId,
+            failureReason: result.failureReason,
+            userId,
+          });
+          messageSent = result.status === 'SENT';
+        } catch (err) {
+          messageError = err instanceof Error ? err.message : 'Failed to send SMS';
+        }
+      }
+    }
+
+    return {
+      id,
+      status: 'CANCELLED',
+      cancelReason: reason,
+      messageSent,
+      messageError,
+    };
+  }
+
+  async prepareWhatsApp(schemaName: string, tenantId: string, id: string, userId: string) {
+    const detail = await this.loadQuotationDetail(schemaName, { id });
+    if (detail.status === 'CANCELLED') {
+      throw new BadRequestException('Cancelled quotations cannot be sent');
+    }
+    const salon = await this.resolveSalonBranding(tenantId);
+    const salonName = resolveQuotationSalonBrand(salon.name);
+    const phone = detail.customerPhone;
+    if (!phone) {
+      throw new BadRequestException('Customer does not have a valid phone number.');
+    }
+    const digits = phoneDigitsForWhatsApp(phone);
+    if (!digits) {
+      throw new BadRequestException('Customer does not have a valid phone number.');
+    }
+
+    const url = this.buildPublicUrl(detail.publicToken);
+    const message = buildWhatsAppQuotationMessage({
+      customerName: detail.customerName,
+      quotationNo: detail.quotationNo,
+      salonName,
+      totalAmount: detail.totalAmount,
+      publicUrl: url,
+    });
+
+    if (messageUsesPlatformAsPrimaryBrand(message, salonName)) {
+      throw new BadRequestException('Invalid salon branding in message');
+    }
+
+    const result = this.messagingService.buildWhatsAppDeepLink(digits, message);
+    await this.recordMessage(schemaName, {
+      quotationId: id,
+      channel: 'WHATSAPP',
+      recipient: digits,
+      message,
+      status: result.status,
+      providerMessageId: result.providerMessageId,
+      userId,
+    });
+    await this.markSentIfDraft(schemaName, id, userId);
+
+    return {
+      channel: 'WHATSAPP',
+      status: result.status,
+      externalUrl: result.externalUrl,
+      recipient: digits,
+      salonName,
+      platformName: APP_NAME_FALLBACK,
+    };
+  }
+
+  async sendSms(schemaName: string, tenantId: string, id: string, userId: string) {
+    const detail = await this.loadQuotationDetail(schemaName, { id });
+    if (detail.status === 'CANCELLED') {
+      throw new BadRequestException('Cancelled quotations cannot be sent');
+    }
+    const salon = await this.resolveSalonBranding(tenantId);
+    const salonName = resolveQuotationSalonBrand(salon.name);
+    const phone = detail.customerPhone;
+    if (!phone) {
+      throw new BadRequestException('Customer does not have a valid phone number.');
+    }
+    const e164 = normalizePhoneE164(phone);
+    if (!e164) {
+      throw new BadRequestException('Customer does not have a valid phone number.');
+    }
+
+    const url = this.buildPublicUrl(detail.publicToken);
+    const message = buildSmsQuotationMessage({
+      quotationNo: detail.quotationNo,
+      salonName,
+      totalAmount: detail.totalAmount,
+      publicUrl: url,
+    });
+
+    if (messageUsesPlatformAsPrimaryBrand(message, salonName)) {
+      throw new BadRequestException('Invalid salon branding in message');
+    }
+
+    const result = await this.messagingService.sendSms(e164, message, tenantId, {
+      quotationId: id,
+      purpose: 'QUOTATION',
+      idempotencyKey: `quote-${id}-${Date.now()}`,
+    });
+    await this.recordMessage(schemaName, {
+      quotationId: id,
+      channel: 'SMS',
+      recipient: e164,
+      message,
+      status: result.status,
+      providerMessageId: result.providerMessageId,
+      failureReason: result.failureReason,
+      userId,
+    });
+    if (result.status !== 'SENT') {
+      throw new BadRequestException(
+        result.failureReason || 'Failed to dispatch quotation SMS. Please verify your SMS credits.',
+      );
+    }
+    await this.markSentIfDraft(schemaName, id, userId);
+
+    return {
+      channel: 'SMS',
+      status: result.status,
+      recipient: e164,
+      failureReason: result.failureReason ?? null,
+      salonName,
+    };
+  }
+
+  async getPublicByToken(token: string) {
+    const tenants = await this.prisma.tenant.findMany({
+      where: { status: 'ACTIVE' },
+      select: {
+        id: true,
+        schemaName: true,
+        name: true,
+        phone: true,
+        email: true,
+        logoUrl: true,
+        primaryColor: true,
+      },
+    });
+
+    for (const tenant of tenants) {
+      try {
+        const detail = await this.loadQuotationDetail(tenant.schemaName, { publicToken: token });
+        const displayStatus = resolveDisplayStatus(detail.status, detail.validUntil);
+        return toPublicQuotationView({
+          quotationNo: detail.quotationNo,
+          quotationDate: detail.quotationDate,
+          validUntil: detail.validUntil,
+          customerName: detail.customerName,
+          customerNotes: detail.customerNotes,
+          subtotal: detail.subtotal,
+          discountAmount: detail.discountAmount,
+          totalAmount: detail.totalAmount,
+          status: displayStatus,
+          canRespond:
+            ['SENT', 'DRAFT'].includes(detail.status) && displayStatus !== 'EXPIRED',
+          cancelReason: detail.cancelReason || detail.declineReason || null,
+          cancelledAt: detail.cancelledAt ? new Date(detail.cancelledAt).toISOString() : null,
+          items: detail.items.map((i) => ({
+            description: i.descriptionSnapshot,
+            quantity: i.quantity,
+            unitPrice: i.quotationUnitPrice,
+            lineTotal: i.lineTotal,
+          })),
+          salon: {
+            name: detail.salonNameSnapshot || tenant.name,
+            phone: tenant.phone,
+            email: tenant.email,
+            logoUrl: tenant.logoUrl,
+            primaryColor: tenant.primaryColor,
+          },
+        });
+      } catch {
+        // token not in this tenant
+      }
+    }
+    throw new NotFoundException('Quotation not found');
+  }
+
+  async acceptPublic(token: string, meta?: { ip?: string; userAgent?: string }) {
+    return this.respondPublic(token, 'ACCEPTED', undefined, meta);
+  }
+
+  async declinePublic(token: string, reason?: string) {
+    return this.respondPublic(token, 'DECLINED', reason);
+  }
+
+  private async respondPublic(
+    token: string,
+    nextStatus: 'ACCEPTED' | 'DECLINED',
+    reason?: string,
+    meta?: { ip?: string; userAgent?: string },
+  ) {
+    const tenants = await this.prisma.tenant.findMany({
+      where: { status: 'ACTIVE' },
+      select: { schemaName: true, name: true },
+    });
+
+    for (const tenant of tenants) {
+      try {
+        const detail = await this.loadQuotationDetail(tenant.schemaName, { publicToken: token });
+        const display = resolveDisplayStatus(detail.status, detail.validUntil);
+        if (display === 'EXPIRED') {
+          throw new BadRequestException('This quotation has expired');
+        }
+        if (!['SENT', 'DRAFT'].includes(detail.status)) {
+          throw new BadRequestException(`Quotation cannot be ${nextStatus.toLowerCase()}`);
+        }
+
+        const quotations = tenantTable(tenant.schemaName, 'quotations');
+        const statusCast = this.statusCast(tenant.schemaName, 2);
+
+        await this.tenantSchemaService.withTenantSchema(tenant.schemaName, async ({ tx }) => {
+          if (nextStatus === 'ACCEPTED') {
+            await tx.$queryRawUnsafe(
+              `UPDATE ${quotations}
+               SET status = ${statusCast},
+                   accepted_at = NOW(),
+                   accepted_ip = $3,
+                   accepted_user_agent = $4,
+                   updated_at = NOW()
+               WHERE id = $1::uuid`,
+              detail.id,
+              'ACCEPTED',
+              meta?.ip ?? null,
+              meta?.userAgent ?? null,
+            );
+          } else {
+            await tx.$queryRawUnsafe(
+              `UPDATE ${quotations}
+               SET status = ${statusCast},
+                   declined_at = NOW(),
+                   decline_reason = $3,
+                   updated_at = NOW()
+               WHERE id = $1::uuid`,
+              detail.id,
+              'DECLINED',
+              reason ?? null,
+            );
+          }
+        });
+
+        return {
+          status: nextStatus,
+          salonName: detail.salonNameSnapshot || tenant.name,
+          message:
+            nextStatus === 'ACCEPTED'
+              ? `Quotation accepted successfully. ${detail.salonNameSnapshot || tenant.name} will contact you regarding the next step.`
+              : 'Quotation declined.',
+        };
+      } catch (error) {
+        if (error instanceof BadRequestException) throw error;
+        if (error instanceof NotFoundException) continue;
+      }
+    }
+    throw new NotFoundException('Quotation not found');
+  }
+
+  async convert(
+    schemaName: string,
+    tenantId: string,
+    id: string,
+    dto: ConvertQuotationDto,
+    user: AuthenticatedUser,
+  ) {
+    const detail = await this.loadQuotationDetail(schemaName, { id });
+    if (detail.convertedSaleId) {
+      throw new ConflictException({
+        message: 'Quotation already converted',
+        convertedSaleId: detail.convertedSaleId,
+      });
+    }
+    if (detail.status !== 'ACCEPTED') {
+      throw new BadRequestException('Only accepted quotations can be converted');
+    }
+
+    const performerMap = new Map(
+      (dto.itemPerformers ?? []).map((p) => [p.quotationItemId, p.employeeId]),
+    );
+
+    const services = detail.items.map((item) => {
+      const employeeId = performerMap.get(item.id) ?? item.employeeId;
+      if (!employeeId) {
+        throw new BadRequestException(
+          `Performer required for service line: ${item.descriptionSnapshot}`,
+        );
+      }
+      if (!item.serviceId) {
+        throw new BadRequestException(`Missing service for line: ${item.descriptionSnapshot}`);
+      }
+      return {
+        serviceId: item.serviceId,
+        employeeId,
+        quantity: item.quantity,
+        unitPrice: item.quotationUnitPrice,
+        discount: item.discountAmount,
+      };
+    });
+
+    const sale = await this.posService.createSaleFromSnapshot(schemaName, user, {
+      branchId: detail.branchId,
+      customerId: detail.customerId,
+      discount: detail.discountAmount,
+      services,
+      products: [],
+      payments: dto.payments,
+      quotationId: detail.id,
+    });
+
+    const quotations = tenantTable(schemaName, 'quotations');
+    const statusCast = this.statusCast(schemaName, 3);
+    await this.tenantSchemaService.withTenantSchema(schemaName, async ({ tx }) => {
+      const updated = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+        `UPDATE ${quotations}
+         SET status = ${statusCast},
+             converted_sale_id = $2::uuid,
+             updated_at = NOW()
+         WHERE id = $1::uuid
+           AND converted_sale_id IS NULL
+           AND status = 'ACCEPTED'::"${schemaName}".quotation_status
+         RETURNING id`,
+        id,
+        sale.id,
+        'CONVERTED',
+      );
+      if (!updated.length) {
+        throw new ConflictException('Quotation was already converted');
+      }
+      await logAudit(tx, schemaName, {
+        userId: user.id,
+        action: 'QUOTATION_CONVERT',
+        entityType: 'quotation',
+        entityId: id,
+        details: { saleId: sale.id, saleNumber: sale.saleNumber },
+      });
+    });
+
+    return {
+      quotationId: id,
+      status: 'CONVERTED',
+      saleId: sale.id,
+      saleNumber: sale.saleNumber,
+    };
+  }
+
+  async getPrintHtml(schemaName: string, tenantId: string, id: string) {
+    const detail = await this.getById(schemaName, id, tenantId);
+    const salonName = detail.salonNameSnapshot || detail.salon.name;
+    const brandColor = detail.salon.primaryColor || '#0f766e';
+    const statusText = detail.displayStatus || detail.status;
+
+    const rows = detail.items
+      .map(
+        (i, idx) =>
+          `<tr>
+            <td style="color:#64748b;font-weight:600;width:32px;text-align:center;">${idx + 1}</td>
+            <td style="font-weight:600;color:#0f172a;">${escapeHtml(i.descriptionSnapshot)}</td>
+            <td style="text-align:center;color:#334155;">${i.quantity}</td>
+            <td style="text-align:right;color:#334155;">${formatMoneyNumber(i.quotationUnitPrice)}</td>
+            <td style="text-align:right;font-weight:700;color:#0f172a;">${formatMoneyNumber(i.lineTotal)}</td>
+          </tr>`,
+      )
+      .join('');
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Quotation ${escapeHtml(detail.quotationNo)}</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 12mm 15mm;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #0f172a;
+      background: #ffffff;
+      margin: 0;
+      padding: 24px;
+      line-height: 1.5;
+      font-size: 13px;
+    }
+    .quote-container {
+      max-width: 780px;
+      margin: 0 auto;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+    }
+    .quote-header {
+      background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+      border-bottom: 2px solid ${brandColor};
+      padding: 24px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 20px;
+    }
+    .brand-title {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+    }
+    .brand-sub {
+      margin: 3px 0 0;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #64748b;
+    }
+    .brand-contact {
+      margin: 4px 0 0;
+      font-size: 11px;
+      color: #64748b;
+    }
+    .quote-meta {
+      text-align: right;
+    }
+    .quote-badge-title {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: ${brandColor};
+    }
+    .quote-number {
+      font-size: 17px;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 2px 0 6px;
+      letter-spacing: -0.01em;
+    }
+    .meta-line {
+      font-size: 11.5px;
+      color: #64748b;
+      margin: 1px 0;
+    }
+    .meta-line strong {
+      color: #1e293b;
+    }
+    .status-pill {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 3px 12px;
+      border-radius: 20px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+    }
+    .quote-body {
+      padding: 24px 28px;
+    }
+    .parties-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #f1f5f9;
+      margin-bottom: 20px;
+    }
+    .party-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      margin-bottom: 4px;
+    }
+    .party-name {
+      font-size: 15px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .party-sub {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 2px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th {
+      border-bottom: 2px solid #cbd5e1;
+      padding: 8px 6px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #64748b;
+      text-align: left;
+    }
+    td {
+      border-bottom: 1px solid #f1f5f9;
+      padding: 10px 6px;
+      font-size: 12.5px;
+    }
+    .summary-section {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 18px;
+    }
+    .summary-card {
+      width: 280px;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12.5px;
+      color: #475569;
+      margin-bottom: 6px;
+    }
+    .grand-total-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 10px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: #f8fafc;
+      border: 1.5px solid ${brandColor};
+    }
+    .grand-total-label {
+      font-size: 15px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .grand-total-val {
+      font-size: 17px;
+      font-weight: 800;
+      color: ${brandColor};
+    }
+    .notes-box {
+      margin-top: 24px;
+      padding: 14px 16px;
+      border-radius: 8px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      font-size: 12px;
+    }
+    .notes-title {
+      font-weight: 700;
+      color: #334155;
+      margin-bottom: 4px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .quote-footer {
+      padding: 18px 28px;
+      border-top: 1px solid #e2e8f0;
+      background: #ffffff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #64748b;
+    }
+    .print-actions {
+      max-width: 780px;
+      margin: 0 auto 16px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      color: #0f172a;
+    }
+    .btn-primary {
+      background: ${brandColor};
+      border-color: ${brandColor};
+      color: #ffffff;
+    }
+    @media print {
+      body {
+        padding: 0;
+      }
+      .print-actions {
+        display: none !important;
+      }
+      .quote-container {
+        border: none;
+        box-shadow: none;
+        max-width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-actions">
+    <button class="btn btn-primary" onclick="window.print()">Print / Save PDF</button>
+  </div>
+
+  <div class="quote-container" id="quotation-print-card">
+    <header class="quote-header">
+      <div>
+        <h1 class="brand-title">${escapeHtml(salonName)}</h1>
+        <p class="brand-sub">Professional Salon &amp; Wellness Services</p>
+        ${detail.salon.phone ? `<p class="brand-contact">Phone: ${escapeHtml(detail.salon.phone)}</p>` : ''}
+        ${detail.salon.email ? `<p class="brand-contact">Email: ${escapeHtml(detail.salon.email)}</p>` : ''}
+      </div>
+      <div class="quote-meta">
+        <div class="quote-badge-title">Official Quotation</div>
+        <div class="quote-number">${escapeHtml(detail.quotationNo)}</div>
+        <div class="meta-line">Date: <strong>${escapeHtml(formatSriLankaDate(detail.quotationDate))}</strong></div>
+        <div class="meta-line">Valid Until: <strong>${escapeHtml(detail.validUntil ? formatSriLankaDate(detail.validUntil) : '30 Days')}</strong></div>
+        <div><span class="status-pill">${escapeHtml(statusText)}</span></div>
+      </div>
+    </header>
+
+    <div class="quote-body">
+      <div class="parties-grid">
+        <div>
+          <div class="party-title">QUOTATION FOR</div>
+          <div class="party-name">${escapeHtml(detail.customerName)}</div>
+          <div class="party-sub">${escapeHtml(detail.customerPhone || 'Valued Client')}</div>
+        </div>
+        <div>
+          <div class="party-title">ISSUED BY</div>
+          <div class="party-name">${escapeHtml(salonName)}</div>
+          <div class="party-sub">Service Estimation &bull; Subject to Final Appointment</div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px;text-align:center;">#</th>
+            <th>Service Description</th>
+            <th style="text-align:center;width:48px;">Qty</th>
+            <th style="text-align:right;width:110px;">Unit Price (LKR)</th>
+            <th style="text-align:right;width:120px;">Amount (LKR)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+
+      <div class="summary-section">
+        <div class="summary-card">
+          <div class="summary-row">
+            <span>Subtotal</span>
+            <span>LKR ${formatMoneyNumber(detail.subtotal)}</span>
+          </div>
+          ${
+            Number(detail.discountAmount) > 0
+              ? `<div class="summary-row">
+                  <span>Discount</span>
+                  <span>- LKR ${formatMoneyNumber(detail.discountAmount)}</span>
+                </div>`
+              : ''
+          }
+          <div class="grand-total-row">
+            <span class="grand-total-label">Total Estimate</span>
+            <span class="grand-total-val">LKR ${formatMoneyNumber(detail.totalAmount)}</span>
+          </div>
+        </div>
+      </div>
+
+      ${
+        detail.customerNotes
+          ? `<div class="notes-box">
+              <div class="notes-title">Notes / Terms</div>
+              <p style="margin:0;color:#475569;">${escapeHtml(detail.customerNotes)}</p>
+            </div>`
+          : ''
+      }
+    </div>
+
+    <footer class="quote-footer">
+      <div>Thank you for choosing ${escapeHtml(salonName)}!</div>
+      <div>Powered by ${escapeHtml(APP_NAME_FALLBACK)}</div>
+    </footer>
+  </div>
+</body>
+</html>`;
+  }
+
+  private async markSentIfDraft(schemaName: string, id: string, userId: string) {
+    const quotations = tenantTable(schemaName, 'quotations');
+    const statusCast = this.statusCast(schemaName, 2);
+    await this.tenantSchemaService.withTenantSchema(schemaName, async ({ tx }) => {
+      await tx.$queryRawUnsafe(
+        `UPDATE ${quotations}
+         SET status = ${statusCast}, updated_at = NOW()
+         WHERE id = $1::uuid AND status = 'DRAFT'::"${schemaName}".quotation_status`,
+        id,
+        'SENT',
+      );
+      await logAudit(tx, schemaName, {
+        userId,
+        action: 'QUOTATION_SEND',
+        entityType: 'quotation',
+        entityId: id,
+      });
+    });
+  }
+
+  private async recordMessage(
+    schemaName: string,
+    data: {
+      quotationId: string;
+      channel: 'WHATSAPP' | 'SMS';
+      recipient: string;
+      message: string;
+      status: string;
+      providerMessageId?: string | null;
+      failureReason?: string | null;
+      userId: string;
+    },
+  ) {
+    const messages = tenantTable(schemaName, 'quotation_messages');
+    const channelCast = this.channelCast(schemaName, 2);
+    const statusCast = this.messageStatusCast(schemaName, 4);
+    await this.tenantSchemaService.withTenantSchema(schemaName, async ({ tx }) => {
+      await tx.$queryRawUnsafe(
+        `INSERT INTO ${messages}
+           (quotation_id, channel, recipient, message, status, provider_message_id, sent_at, failed_at, failure_reason, created_by)
+         VALUES (
+           $1::uuid, ${channelCast}, $3, $5, ${statusCast}, $6,
+           CASE WHEN $4 IN ('SENT','OPENED_EXTERNALLY','DELIVERED') THEN NOW() ELSE NULL END,
+           CASE WHEN $4 = 'FAILED' THEN NOW() ELSE NULL END,
+           $7, $8::uuid
+         )`,
+        data.quotationId,
+        data.channel,
+        data.recipient,
+        data.status,
+        data.message,
+        data.providerMessageId ?? null,
+        data.failureReason ?? null,
+        data.userId,
+      );
+    });
+  }
+
+  private async loadQuotationDetail(
+    schemaName: string,
+    key: { id?: string; publicToken?: string },
+  ) {
+    const quotations = tenantTable(schemaName, 'quotations');
+    const itemsTable = tenantTable(schemaName, 'quotation_items');
+    const messages = tenantTable(schemaName, 'quotation_messages');
+    const customers = tenantTable(schemaName, 'customers');
+    const branches = tenantTable(schemaName, 'branches');
+
+    const where = key.id
+      ? `q.id = $1::uuid`
+      : `q.public_token = $1`;
+    const param = key.id ?? key.publicToken;
+    if (!param) throw new BadRequestException('Missing quotation key');
+
+    return this.tenantSchemaService.withTenantSchema(schemaName, async ({ tx }) => {
+      await this.ensureQuotationsTableSynced(tx, schemaName);
+      const rows = await tx.$queryRawUnsafe<
+        Array<{
+          id: string;
+          quotationNo: string;
+          branchId: string;
+          branchName: string;
+          customerId: string;
+          customerName: string;
+          customerPhone: string | null;
+          quotationDate: string;
+          validUntil: string | null;
+          subtotal: number;
+          discountAmount: number;
+          taxAmount: number;
+          totalAmount: number;
+          status: string;
+          customerNotes: string | null;
+          internalNotes: string | null;
+          salonNameSnapshot: string;
+          publicToken: string;
+          convertedSaleId: string | null;
+          acceptedAt: Date | null;
+          declinedAt: Date | null;
+          declineReason: string | null;
+          cancelReason: string | null;
+          cancelledAt: Date | null;
+          createdAt: Date;
+        }>
+      >(
+        `SELECT q.id, q.quotation_no AS "quotationNo",
+                q.branch_id AS "branchId", b.name AS "branchName",
+                q.customer_id AS "customerId", c.name AS "customerName", c.phone AS "customerPhone",
+                q.quotation_date::text AS "quotationDate",
+                q.valid_until::text AS "validUntil",
+                q.subtotal::float8 AS subtotal,
+                q.discount_amount::float8 AS "discountAmount",
+                q.tax_amount::float8 AS "taxAmount",
+                q.total_amount::float8 AS "totalAmount",
+                q.status::text AS status,
+                q.customer_notes AS "customerNotes",
+                q.internal_notes AS "internalNotes",
+                q.salon_name_snapshot AS "salonNameSnapshot",
+                q.public_token AS "publicToken",
+                q.converted_sale_id AS "convertedSaleId",
+                q.accepted_at AS "acceptedAt",
+                q.declined_at AS "declinedAt",
+                q.decline_reason AS "declineReason",
+                q.cancel_reason AS "cancelReason",
+                q.cancelled_at AS "cancelledAt",
+                q.created_at AS "createdAt"
+         FROM ${quotations} q
+         INNER JOIN ${customers} c ON q.customer_id = c.id
+         INNER JOIN ${branches} b ON q.branch_id = b.id
+         WHERE ${where}
+         LIMIT 1`,
+        param,
+      );
+      if (!rows.length) throw new NotFoundException('Quotation not found');
+
+      const items = await tx.$queryRawUnsafe<
+        Array<{
+          id: string;
+          serviceId: string | null;
+          descriptionSnapshot: string;
+          quantity: number;
+          originalServicePrice: number;
+          quotationUnitPrice: number;
+          discountAmount: number;
+          lineTotal: number;
+          employeeId: string | null;
+        }>
+      >(
+        `SELECT id, service_id AS "serviceId", description_snapshot AS "descriptionSnapshot",
+                quantity::float8 AS quantity,
+                original_service_price::float8 AS "originalServicePrice",
+                quotation_unit_price::float8 AS "quotationUnitPrice",
+                discount_amount::float8 AS "discountAmount",
+                line_total::float8 AS "lineTotal",
+                employee_id AS "employeeId"
+         FROM ${itemsTable}
+         WHERE quotation_id = $1::uuid
+         ORDER BY sort_order ASC, created_at ASC`,
+        rows[0].id,
+      );
+
+      const messageRows = await tx.$queryRawUnsafe(
+        `SELECT id, channel::text AS channel, recipient, message, status::text AS status,
+                provider_message_id AS "providerMessageId",
+                sent_at AS "sentAt", created_at AS "createdAt", failure_reason AS "failureReason"
+         FROM ${messages}
+         WHERE quotation_id = $1::uuid
+         ORDER BY created_at DESC`,
+        rows[0].id,
+      );
+
+      return {
+        ...rows[0],
+        displayStatus: resolveDisplayStatus(rows[0].status, rows[0].validUntil),
+        items,
+        messages: messageRows,
+      };
+    });
+  }
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatLkr(value: number) {
+  return `LKR ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatMoneyNumber(value: number) {
+  return Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}

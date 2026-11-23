@@ -1,0 +1,801 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { authStorage } from '@/lib/auth-storage';
+import { tenantApi } from '@/api/tenant.api';
+import { smsApi } from '@/features/sms/api/sms.api';
+import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
+import { AlertTriangle, Check, Copy, MessageSquare } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  FormError,
+  FormSubmit,
+  getErrorMessage,
+  OpsLoading,
+  SimpleForm,
+} from './salon-ops-ui';
+import { formatMoneyAmount, formatMoneyLkr, moneyHeader } from '@/lib/money';
+import { formatSriLankaDate, formatSriLankaDateTime } from '@/lib/sri-lanka-time';
+import './employees-page.css';
+import './quotation-detail.css';
+
+function statusClass(status: string) {
+  const key = status.toLowerCase();
+  if (key === 'sent') return 'qd-status qd-status-sent';
+  if (key === 'accepted' || key === 'converted') return 'qd-status qd-status-accepted';
+  if (key === 'declined' || key === 'cancelled' || key === 'expired') {
+    return 'qd-status qd-status-declined';
+  }
+  if (key === 'draft') return 'qd-status qd-status-draft';
+  return 'qd-status';
+}
+
+export default function QuotationDetailPage() {
+  const { id = '' } = useParams();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [convertOpen, setConvertOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('CASH');
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [performers, setPerformers] = useState<Record<string, string>>({});
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReasonPreset, setCancelReasonPreset] = useState('Customer requested');
+  const [cancelReasonCustom, setCancelReasonCustom] = useState('');
+  const [notifyCustomer, setNotifyCustomer] = useState(true);
+  const [smsRequiredOpen, setSmsRequiredOpen] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const { data: smsWallet } = useQuery({
+    queryKey: ['sms-wallet'],
+    queryFn: smsApi.getWallet,
+    staleTime: 30_000,
+  });
+
+  const isPlanCovered = Boolean(smsWallet?.isPlanCovered);
+  const isWalletActive = Boolean(smsWallet?.isActive);
+  const availableCredits = smsWallet?.balance ?? 0;
+  const canSendSms = isPlanCovered || (isWalletActive && availableCredits > 0);
+
+  const query = useQuery({
+    queryKey: ['quotation', id],
+    queryFn: () => tenantApi.quotations.get(id),
+    enabled: !!id,
+  });
+
+  const performersQuery = useQuery({
+    queryKey: ['pos-performers', query.data?.branchId],
+    queryFn: async () => {
+      const res = await tenantApi.pos.getPerformers({ branchId: query.data!.branchId });
+      return Array.isArray(res?.performers) ? res.performers : [];
+    },
+    enabled: !!query.data?.branchId && convertOpen,
+  });
+
+  const whatsappMutation = useMutation({
+    mutationFn: () => tenantApi.quotations.whatsapp(id),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['quotation', id] });
+      if (data.externalUrl) window.open(data.externalUrl, '_blank', 'noopener,noreferrer');
+    },
+    onError: (err) => setError(getErrorMessage(err)),
+  });
+
+  const smsMutation = useMutation({
+    mutationFn: () => tenantApi.quotations.sms(id),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ['quotation', id] });
+      qc.invalidateQueries({ queryKey: ['sms-wallet'] });
+      setError(null);
+      toast.success(res?.message || 'Quotation SMS sent successfully!');
+    },
+    onError: (err: any) => {
+      const msg = err.response?.data?.message || err.message || 'Failed to send SMS';
+      setError(msg);
+      toast.error(msg);
+      qc.invalidateQueries({ queryKey: ['sms-wallet'] });
+    },
+  });
+
+  const handleSmsClick = () => {
+    if (!canSendSms) {
+      setSmsRequiredOpen(true);
+      return;
+    }
+    setError(null);
+    smsMutation.mutate();
+  };
+
+  const cancelMutation = useMutation({
+    mutationFn: (payload: { reason?: string; notifyCustomer?: boolean }) =>
+      tenantApi.quotations.cancel(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['quotation', id] });
+      qc.invalidateQueries({ queryKey: ['quotations'] });
+      setCancelOpen(false);
+      setError(null);
+    },
+    onError: (err) => setError(getErrorMessage(err)),
+  });
+
+  const convertMutation = useMutation({
+    mutationFn: (payload: Record<string, unknown>) => tenantApi.quotations.convert(id, payload),
+    onSuccess: (data: { saleId: string }) => {
+      qc.invalidateQueries({ queryKey: ['quotation', id] });
+      qc.invalidateQueries({ queryKey: ['quotations'] });
+      setConvertOpen(false);
+      navigate(`/salon/sales/${data.saleId}`);
+    },
+    onError: (err) => setError(getErrorMessage(err)),
+  });
+
+  const detail = query.data;
+  const itemPerformerDefaults = useMemo(() => {
+    if (!detail) return {};
+    const map: Record<string, string> = {};
+    for (const item of detail.items) {
+      if (item.employeeId) map[item.id] = item.employeeId;
+    }
+    return map;
+  }, [detail]);
+
+  if (query.isLoading) return <OpsLoading />;
+  if (query.isError || !detail) {
+    return (
+      <div className="emp-page qd-page" style={{ padding: '32px 16px', maxWidth: 560, margin: '0 auto' }}>
+        <div
+          style={{
+            background: '#fff',
+            border: '1px solid #e2e8f0',
+            borderRadius: 12,
+            padding: 28,
+            textAlign: 'center',
+            boxShadow: '0 4px 16px rgba(15,23,42,0.04)',
+          }}
+        >
+          <div
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: '50%',
+              backgroundColor: '#fee2e2',
+              color: '#dc2626',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 12px',
+              fontSize: 22,
+              fontWeight: 'bold',
+            }}
+          >
+            !
+          </div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1e293b', margin: '0 0 8px' }}>
+            Quotation Not Found
+          </h2>
+          <p style={{ color: '#64748b', fontSize: 14, margin: '0 0 20px', lineHeight: 1.5 }}>
+            {getErrorMessage(query.error) ||
+              'The requested quotation could not be found or has been removed.'}
+          </p>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <Button asChild variant="outline">
+              <Link to="/salon/quotations">Back to Quotations</Link>
+            </Button>
+            <Button onClick={() => void query.refetch()}>Retry</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const printQuotation = () => {
+    const token = authStorage.getAccessToken();
+    const url = tenantApi.quotations.printUrl(id);
+
+    // Pre-open window synchronously to prevent browser popup blockers on mobile/desktop
+    const w = window.open('', '_blank');
+    if (w) {
+      w.document.write('<p style="font-family:sans-serif;padding:24px;color:#64748b;">Loading printable quotation...</p>');
+    }
+
+    void fetch(url, {
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => r.text())
+      .then((html) => {
+        if (w) {
+          w.document.open();
+          w.document.write(html);
+          w.document.close();
+          setTimeout(() => {
+            w.focus();
+            w.print();
+          }, 250);
+        } else {
+          // Fallback if popup was blocked completely
+          const iframe = document.createElement('iframe');
+          iframe.style.position = 'fixed';
+          iframe.style.right = '0';
+          iframe.style.bottom = '0';
+          iframe.style.width = '0';
+          iframe.style.height = '0';
+          iframe.style.border = '0';
+          document.body.appendChild(iframe);
+          iframe.contentWindow?.document.open();
+          iframe.contentWindow?.document.write(html);
+          iframe.contentWindow?.document.close();
+          setTimeout(() => {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+          }, 250);
+        }
+      })
+      .catch((err) => {
+        if (w) w.close();
+        setError(getErrorMessage(err));
+      });
+  };
+
+  const canEdit = ['DRAFT', 'SENT'].includes(detail.status);
+  const canCancel = !['CONVERTED', 'CANCELLED'].includes(detail.status);
+
+  return (
+    <div className="emp-page qd-page">
+      <header className="qd-header">
+        <div className="qd-header-top">
+          <div>
+            <h1 className="qd-title">{detail.quotationNo}</h1>
+            <p className="qd-subtitle">{detail.salonNameSnapshot}</p>
+            <span className={statusClass(detail.displayStatus)}>{detail.displayStatus}</span>
+          </div>
+          <Button asChild variant="outline" size="sm" className="qd-back">
+            <Link to="/salon/quotations">Back</Link>
+          </Button>
+        </div>
+      </header>
+
+      <FormError message={error} />
+
+      {detail.status === 'CANCELLED' && (
+        <div
+          style={{
+            backgroundColor: '#fef2f2',
+            border: '1px solid #fecaca',
+            borderRadius: 8,
+            padding: '12px 16px',
+            marginBottom: 16,
+            color: '#991b1b',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 8,
+            }}
+          >
+            <span style={{ fontWeight: 700, fontSize: 14 }}>QUOTATION CANCELLED</span>
+            {detail.cancelledAt && (
+              <span style={{ fontSize: 12, opacity: 0.85 }}>
+                Cancelled: {formatSriLankaDateTime(detail.cancelledAt)}
+              </span>
+            )}
+          </div>
+          {detail.cancelReason && (
+            <p style={{ margin: '6px 0 0', fontSize: 13 }}>
+              <strong>Cancellation Reason:</strong> {detail.cancelReason}
+            </p>
+          )}
+        </div>
+      )}
+
+      <section className="qd-hero" aria-label="Quotation summary">
+        <div className="qd-card">
+          <div className="qd-card-label">Customer</div>
+          <div className="qd-card-value">{detail.customerName}</div>
+          <div className="qd-card-meta">{detail.customerPhone || 'No phone'}</div>
+        </div>
+        <div className="qd-card">
+          <div className="qd-card-label">Branch & dates</div>
+          <div className="qd-card-value">{detail.branchName}</div>
+          <div className="qd-card-meta">
+            {formatSriLankaDate(detail.quotationDate)}
+            {detail.validUntil ? ` → ${formatSriLankaDate(detail.validUntil)}` : ''}
+          </div>
+        </div>
+        <div className="qd-card qd-card-total">
+          <div className="qd-card-label">Total</div>
+          <div className="qd-card-value">{formatMoneyLkr(detail.totalAmount)}</div>
+          <div className="qd-card-meta">
+            Subtotal {formatMoneyLkr(detail.subtotal)}
+            {detail.discountAmount > 0 ? ` · Discount ${formatMoneyLkr(detail.discountAmount)}` : ''}
+          </div>
+        </div>
+      </section>
+
+      <nav className="qd-actions" aria-label="Quotation actions">
+        <Button
+          type="button"
+          className="qd-btn-primary"
+          onClick={() => whatsappMutation.mutate()}
+          disabled={whatsappMutation.isPending}
+        >
+          {whatsappMutation.isPending ? 'Opening…' : 'WhatsApp'}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleSmsClick}
+          disabled={smsMutation.isPending}
+          title={canSendSms ? 'Send quotation via SMS' : 'SMS credits required to send'}
+          className="gap-1.5"
+        >
+          <MessageSquare size={14} />
+          {smsMutation.isPending ? 'Sending SMS…' : 'SMS'}
+        </Button>
+        {canEdit && (
+          <Button asChild variant="outline">
+            <Link to={`/salon/quotations/${id}/edit`}>Edit</Link>
+          </Button>
+        )}
+        <Button type="button" variant="outline" onClick={printQuotation}>
+          Print / PDF
+        </Button>
+        {detail.publicUrl && (
+          <div className="inline-flex items-center gap-1.5 flex-wrap">
+            <Button asChild variant="outline">
+              <a href={detail.publicUrl} target="_blank" rel="noreferrer">
+                Customer Link
+              </a>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (detail.publicUrl) {
+                  navigator.clipboard.writeText(detail.publicUrl);
+                  setCopiedLink(true);
+                  toast.success('Customer quotation link copied to clipboard!');
+                  setTimeout(() => setCopiedLink(false), 2000);
+                }
+              }}
+              title="Copy customer link to clipboard"
+              className="gap-1.5"
+            >
+              {copiedLink ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+              <span>{copiedLink ? 'Copied!' : 'Copy Link'}</span>
+            </Button>
+          </div>
+        )}
+        {detail.status === 'ACCEPTED' && !detail.convertedSaleId && (
+          <Button
+            type="button"
+            onClick={() => {
+              setPerformers(itemPerformerDefaults);
+              setPaymentAmount(String(detail.totalAmount));
+              setConvertOpen(true);
+            }}
+          >
+            Convert to Invoice
+          </Button>
+        )}
+        {detail.convertedSaleId && (
+          <Button asChild>
+            <Link to={`/salon/sales/${detail.convertedSaleId}`}>View Invoice</Link>
+          </Button>
+        )}
+        {canCancel && (
+          <Button
+            type="button"
+            variant="destructive"
+            className="qd-btn-danger"
+            onClick={() => {
+              setCancelReasonPreset('Customer requested');
+              setCancelReasonCustom('');
+              setNotifyCustomer(!!detail.customerPhone);
+              setCancelOpen(true);
+            }}
+          >
+            Cancel
+          </Button>
+        )}
+      </nav>
+
+      <section className="qd-section">
+        <h2 className="qd-section-title">Items</h2>
+
+        <div className="qd-item-cards">
+          {detail.items.map((item) => (
+            <article key={item.id} className="qd-item-card">
+              <div className="qd-item-card-title">{item.descriptionSnapshot}</div>
+              <div className="qd-item-card-grid">
+                <div>
+                  <span>Qty</span>
+                  <strong>{item.quantity}</strong>
+                </div>
+                <div>
+                  <span>{moneyHeader('Master')}</span>
+                  <strong>{formatMoneyAmount(item.originalServicePrice)}</strong>
+                </div>
+                <div>
+                  <span>{moneyHeader('Quote price')}</span>
+                  <strong>{formatMoneyAmount(item.quotationUnitPrice)}</strong>
+                </div>
+                <div>
+                  <span>{moneyHeader('Line total')}</span>
+                  <strong>{formatMoneyAmount(item.lineTotal)}</strong>
+                </div>
+              </div>
+              <div className="qd-item-card-total">
+                <span>{moneyHeader('Total')}</span>
+                <span>{formatMoneyAmount(item.lineTotal)}</span>
+              </div>
+            </article>
+          ))}
+        </div>
+
+        <div className="qd-table-wrap">
+          <table className="qd-table">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th className="qd-num">Qty</th>
+                <th className="qd-num">{moneyHeader('Master')}</th>
+                <th className="qd-num">{moneyHeader('Quote price')}</th>
+                <th className="qd-num">{moneyHeader('Total')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.items.map((item) => (
+                <tr key={item.id}>
+                  <td className="qd-name">{item.descriptionSnapshot}</td>
+                  <td className="qd-num">{item.quantity}</td>
+                  <td className="qd-num">{formatMoneyAmount(item.originalServicePrice)}</td>
+                  <td className="qd-num">{formatMoneyAmount(item.quotationUnitPrice)}</td>
+                  <td className="qd-num">{formatMoneyAmount(item.lineTotal)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="qd-totals">
+          <div className="qd-totals-row">
+            <span>Subtotal</span>
+            <span>{formatMoneyLkr(detail.subtotal)}</span>
+          </div>
+          <div className="qd-totals-row">
+            <span>Discount</span>
+            <span>{formatMoneyLkr(detail.discountAmount)}</span>
+          </div>
+          <div className="qd-totals-row qd-totals-grand">
+            <span>Total</span>
+            <span>{formatMoneyLkr(detail.totalAmount)}</span>
+          </div>
+        </div>
+
+        {(detail.customerNotes || detail.internalNotes) && (
+          <div className="qd-notes">
+            {detail.customerNotes && (
+              <div className="qd-note">
+                <strong>Customer notes</strong>
+                {detail.customerNotes}
+              </div>
+            )}
+            {detail.internalNotes && (
+              <div className="qd-note qd-note-internal">
+                <strong>Internal notes</strong>
+                {detail.internalNotes}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section className="qd-section">
+        <h2 className="qd-section-title">Communication History</h2>
+        {detail.messages.length === 0 ? (
+          <div className="qd-empty">No messages yet. Send via WhatsApp or SMS to start tracking.</div>
+        ) : (
+          <>
+            <div className="qd-msg-cards">
+              {detail.messages.map((m) => (
+                <article key={m.id} className="qd-msg-card">
+                  <div className="qd-msg-card-top">
+                    <span className="qd-msg-channel">{m.channel}</span>
+                    <span className="qd-msg-status">{m.status}</span>
+                  </div>
+                  <div className="qd-msg-meta">{m.recipient}</div>
+                  <div className="qd-msg-meta">{formatSriLankaDateTime(m.createdAt)}</div>
+                </article>
+              ))}
+            </div>
+
+            <div className="qd-table-wrap">
+              <table className="qd-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Channel</th>
+                    <th>Number</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.messages.map((m) => (
+                    <tr key={m.id}>
+                      <td>{formatSriLankaDateTime(m.createdAt)}</td>
+                      <td>{m.channel}</td>
+                      <td>{m.recipient}</td>
+                      <td>{m.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </section>
+
+      <Dialog open={convertOpen} onOpenChange={setConvertOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Convert to Invoice</DialogTitle>
+          </DialogHeader>
+          <p style={{ fontSize: 13, color: 'var(--qd-muted)' }}>
+            Uses quotation snapshot prices. Assign performers and collect payment.
+          </p>
+          <SimpleForm
+            onSubmit={(e) => {
+              e.preventDefault();
+              setError(null);
+              try {
+                const itemPerformers = detail.items.map((item) => {
+                  const employeeId = performers[item.id] || item.employeeId;
+                  if (!employeeId) {
+                    throw new Error(`Performer required for ${item.descriptionSnapshot}`);
+                  }
+                  return { quotationItemId: item.id, employeeId };
+                });
+                convertMutation.mutate({
+                  payments: [
+                    {
+                      method: paymentMethod,
+                      amount: Number(paymentAmount),
+                    },
+                  ],
+                  itemPerformers,
+                });
+              } catch (err) {
+                setError(err instanceof Error ? err.message : 'Unable to convert');
+              }
+            }}
+          >
+            <FormError message={error} />
+            {detail.items.map((item) => (
+              <div key={item.id} className="space-y-2" style={{ marginBottom: 8 }}>
+                <Label>{item.descriptionSnapshot}</Label>
+                <Select
+                  value={performers[item.id] || item.employeeId || undefined}
+                  onValueChange={(v) => setPerformers((prev) => ({ ...prev, [item.id]: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select performer" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Array.isArray(performersQuery.data) ? performersQuery.data : []).map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ))}
+            <div className="emp-form-grid">
+              <div className="space-y-2">
+                <Label>Payment Method</Label>
+                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CASH">Cash</SelectItem>
+                    <SelectItem value="CARD">Card</SelectItem>
+                    <SelectItem value="BANK_TRANSFER">Bank Transfer</SelectItem>
+                    <SelectItem value="OTHER">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Amount</Label>
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+            <FormSubmit pending={convertMutation.isPending}>Create Invoice</FormSubmit>
+          </SimpleForm>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cancel Quotation</DialogTitle>
+          </DialogHeader>
+          <p style={{ fontSize: 13, color: 'var(--qd-muted)' }}>
+            Are you sure you want to cancel quotation <strong>{detail.quotationNo}</strong>?
+          </p>
+          <SimpleForm
+            onSubmit={(e) => {
+              e.preventDefault();
+              const reason =
+                cancelReasonPreset === 'Other'
+                  ? cancelReasonCustom.trim() || 'Other'
+                  : cancelReasonPreset;
+              cancelMutation.mutate({
+                reason,
+                notifyCustomer,
+              });
+            }}
+          >
+            <FormError message={error} />
+            <div className="space-y-2">
+              <Label>Cancellation Reason</Label>
+              <Select
+                value={cancelReasonPreset}
+                onValueChange={(val) => setCancelReasonPreset(val)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select reason" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Customer requested">Customer requested</SelectItem>
+                  <SelectItem value="Price / Budget issue">Price / Budget issue</SelectItem>
+                  <SelectItem value="Service unavailable">Service unavailable / Scheduling issue</SelectItem>
+                  <SelectItem value="Customer did not respond">Customer did not respond</SelectItem>
+                  <SelectItem value="Duplicate quotation">Duplicate quotation</SelectItem>
+                  <SelectItem value="Entered by mistake">Entered by mistake</SelectItem>
+                  <SelectItem value="Other">Other (specify below)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {cancelReasonPreset === 'Other' && (
+              <div className="space-y-2" style={{ marginTop: 8 }}>
+                <Label>Specific Reason</Label>
+                <Input
+                  type="text"
+                  placeholder="Enter reason for cancellation"
+                  value={cancelReasonCustom}
+                  onChange={(e) => setCancelReasonCustom(e.target.value)}
+                  required
+                />
+              </div>
+            )}
+
+            <div
+              style={{
+                margin: '14px 0',
+                padding: '10px 12px',
+                background: '#f8fafc',
+                borderRadius: 8,
+                border: '1px solid #e2e8f0',
+              }}
+            >
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 13,
+                  cursor: detail.customerPhone ? 'pointer' : 'default',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={notifyCustomer && !!detail.customerPhone}
+                  onChange={(e) => setNotifyCustomer(e.target.checked)}
+                  disabled={!detail.customerPhone}
+                />
+                <span>
+                  Send cancellation notification (SMS) to customer
+                  {detail.customerPhone
+                    ? ` (${detail.customerPhone})`
+                    : ' (No customer phone number available)'}
+                </span>
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCancelOpen(false)}
+                disabled={cancelMutation.isPending}
+              >
+                Keep Quotation
+              </Button>
+              <Button
+                type="submit"
+                variant="destructive"
+                className="qd-btn-danger"
+                disabled={cancelMutation.isPending}
+              >
+                {cancelMutation.isPending ? 'Cancelling…' : 'Confirm Cancellation'}
+              </Button>
+            </div>
+          </SimpleForm>
+        </DialogContent>
+      </Dialog>
+
+      {/* SMS Credits / Activation Required Dialog */}
+      <Dialog open={smsRequiredOpen} onOpenChange={setSmsRequiredOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <AlertTriangle className="h-5 w-5 text-amber-600" />
+              {!isWalletActive && !isPlanCovered
+                ? 'SMS Not Activated'
+                : 'SMS Credits Required'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-sm text-slate-600">
+            <p>
+              {!isWalletActive && !isPlanCovered ? (
+                <>SMS notifications are not activated for your salon. Contact the Super Admin directly to activate SMS and allocate credits to your wallet.</>
+              ) : (
+                <>Your salon has <strong>0 SMS credits</strong> remaining. SMS dispatch for digital quotations and e-bills requires an active SMS credit balance.</>
+              )}
+            </p>
+            <p className="text-xs text-slate-500 bg-amber-50 border border-amber-200 p-3 rounded-lg leading-relaxed">
+              {!isWalletActive && !isPlanCovered
+                ? 'Once activated by the Super Admin, your salon will be able to send digital quotations and receipts directly to customer mobile phones.'
+                : 'Contact your Super Admin to allocate additional SMS credits to your salon wallet.'}
+            </p>
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <Button type="button" variant="outline" onClick={() => setSmsRequiredOpen(false)}>
+              Close
+            </Button>
+            <Button
+              type="button"
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={() => {
+                setSmsRequiredOpen(false);
+                navigate('/salon/subscription?tab=sms#sms-addon');
+              }}
+            >
+              View SMS Status
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
